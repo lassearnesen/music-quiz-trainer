@@ -480,10 +480,26 @@
     function page(u){return api(u).then(function(d){(d.items||[]).forEach(function(p){if(p&&p.id)out.push({id:p.id,name:p.name||'(untitled)',owner:(p.owner&&p.owner.id)||'',collaborative:!!p.collaborative});});guard++;if(d.next&&guard<4)return page(d.next);});}
     return page('/me/playlists?limit=50').then(function(){S.myPlaylists=out;return out;});
   }
-  function loadSearchTracks(q){
+  function loadSearchTracks(q,startOffset){
     var out=[],guard=0;
     function page(offset){return api('/search?type=track&limit=10&offset='+offset+'&market=from_token&q='+encodeURIComponent(q)).then(function(d){out=out.concat((d.tracks&&d.tracks.items)||[]);guard++;if(d.tracks&&d.tracks.next&&guard<5)return page(offset+10);});}
-    return page(0).then(function(){return out;});
+    return page(startOffset||0).then(function(){return out;});
+  }
+  // Decade rounds: sample a few RANDOM years from the decade, each at/near the top of search (well-known),
+  // so the pool is fresh every round but still popular. Falls back to the whole-decade top if thin.
+  function loadDecade(range){
+    var m=/^(\d{4})-(\d{4})$/.exec(range||'');
+    var start=m?parseInt(m[1],10):2000, end=m?parseInt(m[2],10):2009;
+    var years=[];for(var y=start;y<=end;y++)years.push(y);
+    shuffle(years);
+    var pick=years.slice(0,Math.min(5,years.length));var out=[];
+    function one(i){
+      if(i>=pick.length)return Promise.resolve();
+      var off=[0,0,10,20][Math.floor(Math.random()*4)];
+      return api('/search?type=track&limit=10&offset='+off+'&market=from_token&q='+encodeURIComponent('year:'+pick[i]))
+        .then(function(d){out=out.concat((d.tracks&&d.tracks.items)||[]);}).catch(function(){}).then(function(){return one(i+1);});
+    }
+    return one(0).then(function(){if(out.length<12)return loadSearchTracks('year:'+range,0).then(function(r){out=out.concat(r);return out;});return out;});
   }
 
   function loadSource(){
@@ -493,8 +509,8 @@
     if(type==='liked')return loadLiked();
     if(type==='top')return loadTop($('topRange').value);
     if(type==='recent')return loadRecent();
-    if(type==='decade')return loadSearchTracks('year:'+$('decadeSel').value);
-    if(type==='genre'){var g=($('genreInput').value||'').trim();if(!g)return Promise.reject(new Error('Enter a genre.'));return loadSearchTracks('genre:"'+g+'"').then(function(r){return (r&&r.length)?r:loadSearchTracks(g);});}
+    if(type==='decade')return loadDecade($('decadeSel').value);
+    if(type==='genre'){var g=($('genreInput').value||'').trim();if(!g)return Promise.reject(new Error('Enter a genre.'));var gb=[0,0,10,20][Math.floor(Math.random()*4)];return loadSearchTracks('genre:"'+g+'"',gb).then(function(r){return (r&&r.length)?r:loadSearchTracks(g,0);});}
     if(type==='artist'){var a=($('artistInput').value||'').trim();if(!a)return Promise.reject(new Error('Enter an artist to drill.'));return loadSearchTracks('artist:"'+a+'"');}
     if(type==='misses')return loadMisses();
     return Promise.reject(new Error('Pick a source.'));
