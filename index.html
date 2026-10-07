@@ -213,6 +213,7 @@
         <div>
           <div id="fbTrack" class="t"></div>
           <div id="fbArtist" class="a"></div>
+          <a id="fbTrackLink" class="ai-link" target="_blank" rel="noopener" style="display:none">Open song on Spotify ↗</a>
         </div>
       </div>
       <ul id="fbTrivia" class="trivia"></ul>
@@ -372,7 +373,7 @@
 
   // Feb 2026 API migration: /tracks -> /items, and each entry's track is under `item`.
   function loadPlaylist(id){
-    var fields='fields='+encodeURIComponent('next,items(item(id,uri,name,is_local,is_playable,type,duration_ms,explicit,track_number,album(name,release_date,total_tracks,images),artists(id,name)))');
+    var fields='fields='+encodeURIComponent('next,items(item(id,uri,name,is_local,is_playable,type,duration_ms,explicit,track_number,external_urls(spotify),album(name,album_type,release_date,total_tracks,images,external_urls(spotify)),artists(id,name)))');
     function fetchAll(market){
       var out=[];var guard=0;
       var url='/playlists/'+id+'/items?limit=100'+(market?('&market='+market):'')+'&'+fields;
@@ -394,42 +395,61 @@
     return fetchAll('from_token').catch(function(){return fetchAll('');});
   }
 
-  // Batch /artists?ids= was removed in the Feb 2026 migration; fetch individually + cache.
-  function ensureArtist(id){
+  // Batch /artists?ids= was removed in Feb 2026; fetch individually, falling back to search (dev-mode safe).
+  function ensureArtist(id,name){
     if(S.artistInfo[id])return Promise.resolve(S.artistInfo[id]);
-    return api('/artists/'+id).then(function(a){
+    function store(a){
       var info={
-        name:(a&&a.name)||'',
+        name:(a&&a.name)||name||'',
         genres:(a&&a.genres)||[],
         image:(a&&a.images&&a.images[0]&&a.images[0].url)||'',
         url:(a&&a.external_urls&&a.external_urls.spotify)||''
       };
       S.artistInfo[id]=info;return info;
-    }).catch(function(){var info={name:'',genres:[],image:'',url:''};S.artistInfo[id]=info;return info;});
+    }
+    return api('/artists/'+id).then(store).catch(function(){
+      if(!name)return store(null);
+      return api('/search?type=artist&limit=10&q='+encodeURIComponent(name)).then(function(d){
+        var items=(d.artists&&d.artists.items)||[];var match=null;
+        for(var i=0;i<items.length;i++){if(items[i].id===id){match=items[i];break;}}
+        return store(match||null);
+      }).catch(function(){return store(null);});
+    });
   }
 
-  // Spotify exposes no "years active" field, so approximate it from the artist's release history.
-  function ensureArtistSpan(id){
+  // Spotify has no "years active" field (and /artists/{id}/albums is 403 in dev mode), so approximate the
+  // active period from release dates found via album search, which still works in dev mode.
+  function ensureArtistSpan(id,name){
     if(S.artistSpan[id])return Promise.resolve(S.artistSpan[id]);
-    var years=[],count=0,guard=0;
-    function collect(d){
-      (d.items||[]).forEach(function(al){
-        count++;
-        var y=parseInt((((al&&al.release_date)||'')+'').slice(0,4),10);
-        if(y)years.push(y);
+    name=name||(S.artistInfo[id]&&S.artistInfo[id].name)||'';
+    var years=[],count=0;
+    function collect(items){
+      (items||[]).forEach(function(al){
+        if(al&&al.release_date){count++;var y=parseInt((al.release_date+'').slice(0,4),10);if(y)years.push(y);}
       });
     }
-    function fetchGroups(groups){
-      years=[];count=0;guard=0;
-      function page(u){return api(u).then(function(d){collect(d);guard++;if(d.next&&guard<5)return page(d.next);});}
-      return page('/artists/'+id+'/albums?include_groups='+groups+'&limit=50');
+    function tryAlbumsEndpoint(){
+      var guard=0;
+      function page(u){return api(u).then(function(d){collect(d.items);guard++;if(d.next&&guard<5)return page(d.next);});}
+      return page('/artists/'+id+'/albums?include_groups=album,single,compilation&limit=50').catch(function(){});
     }
-    return fetchGroups('album,single,compilation').then(function(){
-      if(!years.length)return fetchGroups('appears_on');
-    }).then(function(){
+    function trySearch(){
+      if(!name)return Promise.resolve();
+      var guard=0;
+      function page(offset){
+        return api('/search?type=album&limit=10&offset='+offset+'&q='+encodeURIComponent('artist:"'+name+'"')).then(function(d){
+          var items=((d.albums&&d.albums.items)||[]).filter(function(al){return (al.artists||[]).some(function(a){return a.id===id;});});
+          collect(items);
+          guard++;
+          if(d.albums&&d.albums.next&&guard<3)return page(offset+10);
+        }).catch(function(){});
+      }
+      return page(0);
+    }
+    return tryAlbumsEndpoint().then(function(){if(!years.length)return trySearch();}).then(function(){
       var span={count:count,first:years.length?Math.min.apply(null,years):null,last:years.length?Math.max.apply(null,years):null};
       S.artistSpan[id]=span;return span;
-    }).catch(function(){var span={count:0,first:null,last:null};S.artistSpan[id]=span;return span;});
+    });
   }
 
   function buildArtistPool(tracks){
@@ -461,7 +481,7 @@
     var res=[];
     function add(c){if(!c||!c.id||usedId[c.id]||usedName[norm(c.name)])return;usedId[c.id]=1;usedName[norm(c.name)]=1;res.push({id:c.id,name:c.name});}
     var pool=S.artistPool.filter(function(a){return !coIds[a.id];});
-    return ensureArtist(correct.id).then(function(info){
+    return ensureArtist(correct.id,correct.name).then(function(info){
       var genres=(info&&info.genres)||[];
       var p=Promise.resolve();
       // Tier 1: same-genre artists via search (plausible "similar" decoys)
@@ -612,6 +632,7 @@
     $('aiName').textContent='';$('aiActive').textContent='';$('aiGenres').textContent='';
     $('aiImg').removeAttribute('src');$('aiImg').style.display='none';
     $('aiLink').style.display='none';
+    $('fbTrackLink').style.display='none';
   }
 
   function renderQuizLoading(){
@@ -668,7 +689,7 @@
     var lines=[];
     var year=((t.album&&t.album.release_date)||'').slice(0,4);
     if(year)lines.push('Released in '+year+'.');
-    if(t.album&&t.album.name)lines.push('From the album \u201c'+t.album.name+'\u201d'+(t.album.total_tracks?(' ('+t.album.total_tracks+' tracks)'):'')+'.');
+    if(t.album&&t.album.name){var kind=(t.album.album_type==='single')?'single':((t.album.album_type==='compilation')?'compilation':'album');lines.push('From the '+kind+' \u201c'+t.album.name+'\u201d'+(t.album.total_tracks?(' ('+t.album.total_tracks+' tracks)'):'')+'.');}
     if(t.track_number)lines.push('Track #'+t.track_number+' on the album.');
     if(t.duration_ms)lines.push('Length: '+fmtDur(t.duration_ms)+'.');
     if(t.explicit)lines.push('Marked explicit.');
@@ -688,6 +709,8 @@
     $('fbCover').src=img;$('fbCover').style.visibility=img?'visible':'hidden';
     $('fbTrack').textContent=t.name;
     $('fbArtist').textContent='by '+t.artists.map(function(a){return a.name;}).join(', ');
+    var tl=$('fbTrackLink');var turl=(t.external_urls&&t.external_urls.spotify)||(t.album&&t.album.external_urls&&t.album.external_urls.spotify)||'';
+    if(turl){tl.href=turl;tl.style.display='';}else{tl.style.display='none';}
     var ul=$('fbTrivia');ul.innerHTML='';
     buildTrivia(t).forEach(function(line){var li=document.createElement('li');li.textContent=line;ul.appendChild(li);});
     if('mediaSession' in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:t.artists.map(function(a){return a.name;}).join(', '),album:(t.album&&t.album.name)||'',artwork:img?[{src:img,sizes:'300x300',type:'image/jpeg'}]:[]});}catch(e){}}
@@ -711,7 +734,7 @@
     var link=$('aiLink');
     if(info.url){link.href=info.url;link.style.display='';}else{link.style.display='none';}
     var act=$('aiActive');act.textContent='Finding active period\u2026';
-    ensureArtistSpan(artist.id).then(function(span){
+    ensureArtistSpan(artist.id,artist.name).then(function(span){
       if(!S.current||!S.current.track||S.current.track.artists[0].id!==artist.id)return;
       act.textContent=activeLine(span);
     });
