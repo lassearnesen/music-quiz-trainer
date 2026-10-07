@@ -155,6 +155,7 @@
     <div class="card">
       <label for="playlistUrl">Playlist link</label>
       <input id="playlistUrl" type="text" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" spellcheck="false">
+      <p class="muted" style="margin:6px 0 0;font-size:13px">Use a playlist you <b>own or collaborate on</b> — Spotify only shares tracks for those.</p>
       <div class="spacer"></div>
       <div class="row">
         <div>
@@ -334,7 +335,7 @@
         if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false);}
         if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry);});}
         if(res.status===204)return null;
-        if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){throw new Error('API '+res.status+((j.error&&j.error.message)?': '+j.error.message:''));});}
+        if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';throw new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));});}
         return res.json();
       });
     });
@@ -350,42 +351,37 @@
     return null;
   }
 
+  // Feb 2026 API migration: /tracks -> /items, and each entry's track is under `item`.
   function loadPlaylist(id){
-    var market=(S.user&&S.user.country)?('&market='+S.user.country):'';
-    var fields='fields='+encodeURIComponent('next,items(track(id,uri,name,is_local,is_playable,type,duration_ms,explicit,popularity,track_number,album(name,release_date,total_tracks,images),artists(id,name)))');
-    var url='/playlists/'+id+'/tracks?limit=100'+market+'&'+fields;
-    var out=[];var guard=0;
-    function page(u){
-      return api(u).then(function(d){
-        (d.items||[]).forEach(function(it){
-          var t=it.track;
-          if(!t||t.type!=='track'||t.is_local||!t.id)return;
-          if(t.is_playable===false)return;
-          if(!t.artists||!t.artists.length||!t.artists[0].id)return;
-          out.push(t);
+    var fields='fields='+encodeURIComponent('next,items(item(id,uri,name,is_local,is_playable,type,duration_ms,explicit,track_number,album(name,release_date,total_tracks,images),artists(id,name)))');
+    function fetchAll(market){
+      var out=[];var guard=0;
+      var url='/playlists/'+id+'/items?limit=100'+(market?('&market='+market):'')+'&'+fields;
+      function page(u){
+        return api(u).then(function(d){
+          (d.items||[]).forEach(function(it){
+            var t=it.item;
+            if(!t||t.type!=='track'||t.is_local||!t.id)return;
+            if(t.is_playable===false)return;
+            if(!t.artists||!t.artists.length||!t.artists[0].id)return;
+            out.push(t);
+          });
+          guard++;
+          if(d.next&&guard<30)return page(d.next);
         });
-        guard++;
-        if(d.next&&guard<30)return page(d.next);
-      });
+      }
+      return page(url).then(function(){return out;});
     }
-    return page(url).then(function(){return out;});
+    return fetchAll('from_token').catch(function(){return fetchAll('');});
   }
 
-  function loadArtistInfo(tracks){
-    var ids={};
-    tracks.forEach(function(t){t.artists.forEach(function(a){if(a.id)ids[a.id]=1;});});
-    var list=Object.keys(ids);
-    var chunks=[];for(var i=0;i<list.length;i+=50)chunks.push(list.slice(i,i+50));
-    function run(k){
-      if(k>=chunks.length)return Promise.resolve();
-      return api('/artists?ids='+chunks[k].join(',')).then(function(d){
-        (d.artists||[]).forEach(function(a){
-          if(a&&a.id)S.artistInfo[a.id]={name:a.name,genres:a.genres||[],popularity:a.popularity||0,followers:(a.followers&&a.followers.total)||0};
-        });
-        return run(k+1);
-      });
-    }
-    return run(0);
+  // Batch /artists?ids= was removed in the Feb 2026 migration; fetch individually + cache.
+  function ensureArtist(id){
+    if(S.artistInfo[id])return Promise.resolve(S.artistInfo[id]);
+    return api('/artists/'+id).then(function(a){
+      var info={name:(a&&a.name)||'',genres:(a&&a.genres)||[]};
+      S.artistInfo[id]=info;return info;
+    }).catch(function(){var info={name:'',genres:[]};S.artistInfo[id]=info;return info;});
   }
 
   function buildArtistPool(tracks){
@@ -395,51 +391,40 @@
   }
 
   // ---------- distractors (tiered "similar") ----------
-  function genreSearchArtists(genres,pop){
+  function genreSearchArtists(genres){
     var gs=genres.slice(0,3);
     function one(k,acc){
       if(k>=gs.length)return Promise.resolve(acc);
       var g=gs[k];
       if(S.genreCache[g]){return one(k+1,acc.concat(S.genreCache[g]));}
-      return api('/search?type=artist&limit=20&q='+encodeURIComponent('genre:"'+g+'"'))
-        .then(function(d){var arr=((d.artists&&d.artists.items)||[]).map(function(a){return{id:a.id,name:a.name,popularity:a.popularity};});S.genreCache[g]=arr;return one(k+1,acc.concat(arr));})
+      return api('/search?type=artist&limit=10&q='+encodeURIComponent('genre:"'+g+'"'))
+        .then(function(d){var arr=((d.artists&&d.artists.items)||[]).map(function(a){return{id:a.id,name:a.name};});S.genreCache[g]=arr;return one(k+1,acc.concat(arr));})
         .catch(function(){S.genreCache[g]=[];return one(k+1,acc);});
     }
-    return one(0,[]).then(function(all){
-      var band=[],rest=[];
-      all.forEach(function(a){(Math.abs((a.popularity==null?50:a.popularity)-pop)<=25?band:rest).push(a);});
-      return shuffle(band).concat(shuffle(rest));
-    });
+    return one(0,[]).then(function(all){return shuffle(all);});
   }
 
+  // Popularity/followers were removed in Feb 2026; similarity now uses genres only.
   function pickDistractors(track){
     var correct=track.artists[0];
     var coIds={};track.artists.forEach(function(a){coIds[a.id]=1;});
-    var info=S.artistInfo[correct.id]||{genres:[],popularity:50};
-    var genres=info.genres||[];var pop=info.popularity==null?50:info.popularity;
     var usedId={};var usedName={};usedId[correct.id]=1;usedName[norm(correct.name)]=1;
     Object.keys(coIds).forEach(function(k){usedId[k]=1;});
     var res=[];
     function add(c){if(!c||!c.id||usedId[c.id]||usedName[norm(c.name)])return;usedId[c.id]=1;usedName[norm(c.name)]=1;res.push({id:c.id,name:c.name});}
     var pool=S.artistPool.filter(function(a){return !coIds[a.id];});
-    function popOf(a){var p=(S.artistInfo[a.id]||{}).popularity;return p==null?50:p;}
-    function shares(a){var g=(S.artistInfo[a.id]||{}).genres||[];return g.some(function(x){return genres.indexOf(x)>=0;});}
-    shuffle(pool);
-    // Tier 1: same genre + similar popularity (playlist)
-    pool.forEach(function(a){if(res.length<3&&genres.length&&shares(a)&&Math.abs(popOf(a)-pop)<=20)add(a);});
-    // Tier 1b: same genre, any popularity (playlist)
-    if(res.length<3&&genres.length)pool.forEach(function(a){if(res.length<3&&shares(a))add(a);});
-    var p=Promise.resolve();
-    // Tier 2: same-genre via search (outside playlist)
-    if(res.length<3&&genres.length){
-      p=p.then(function(){return genreSearchArtists(genres,pop);}).then(function(found){found.forEach(function(a){if(res.length<3)add(a);});});
-    }
-    return p.then(function(){
-      // Tier 3: nearest popularity (playlist)
-      if(res.length<3){pool.slice().sort(function(a,b){return Math.abs(popOf(a)-pop)-Math.abs(popOf(b)-pop);}).forEach(function(a){if(res.length<3)add(a);});}
-      // Tier 4: random (playlist)
-      if(res.length<3)pool.forEach(function(a){if(res.length<3)add(a);});
-      return res.slice(0,3);
+    return ensureArtist(correct.id).then(function(info){
+      var genres=(info&&info.genres)||[];
+      var p=Promise.resolve();
+      // Tier 1: same-genre artists via search (plausible "similar" decoys)
+      if(genres.length){
+        p=genreSearchArtists(genres).then(function(found){found.forEach(function(a){if(res.length<3)add(a);});});
+      }
+      return p.then(function(){
+        // Tier 2: fall back to other artists from the playlist
+        if(res.length<3){shuffle(pool);pool.forEach(function(a){if(res.length<3)add(a);});}
+        return res.slice(0,3);
+      });
     });
   }
 
@@ -521,11 +506,8 @@
     $('startBtn').disabled=true;status.textContent='Loading playlist\u2026';
     S.lastPlaylistId=id;S.tracks=[];S.artistInfo={};S.artistPool=[];S.genreCache={};
     loadPlaylist(id).then(function(tracks){
-      if(!tracks.length)throw new Error('No playable tracks found in that playlist.');
+      if(!tracks.length)throw new Error('No tracks returned. Spotify now only shares tracks for playlists you own or collaborate on \u2014 try one of your own playlists.');
       S.tracks=tracks;buildArtistPool(tracks);
-      status.textContent='Reading artist info\u2026';
-      return loadArtistInfo(tracks);
-    }).then(function(){
       status.textContent='Starting player\u2026 (allow a moment)';
       return ensurePlayer();
     }).then(function(){
@@ -632,8 +614,6 @@
     if(t.album&&t.album.name)lines.push('From the album \u201c'+t.album.name+'\u201d'+(t.album.total_tracks?(' ('+t.album.total_tracks+' tracks)'):'')+'.');
     if(t.track_number)lines.push('Track #'+t.track_number+' on the album.');
     if(ai.genres&&ai.genres.length)lines.push(t.artists[0].name+' is tagged '+ai.genres.slice(0,3).map(cap).join(', ')+'.');
-    if(ai.followers)lines.push(t.artists[0].name+' has '+fmtNum(ai.followers)+' followers on Spotify.');
-    if(typeof t.popularity==='number')lines.push('This track rates '+t.popularity+'/100 on Spotify\u2019s popularity meter.');
     if(t.duration_ms)lines.push('Length: '+fmtDur(t.duration_ms)+'.');
     if(t.explicit)lines.push('Marked explicit.');
     if(t.artists.length>1)lines.push('Features '+t.artists.slice(1).map(function(a){return a.name;}).join(', ')+'.');
@@ -684,10 +664,6 @@
   // ---------- screen wiring ----------
   function showSetup(){
     $('userName').textContent=S.user&&S.user.display_name?('Hi, '+S.user.display_name):'Connected';
-    if(S.user&&S.user.product&&S.user.product!=='premium'){
-      $('userDot').className='dot bad';
-      toast('This account is not Premium — playback will not work.');
-    }
     screen('screen-setup');
   }
   function showConnect(){screen('screen-connect');}

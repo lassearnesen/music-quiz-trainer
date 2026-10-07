@@ -71,13 +71,15 @@ trailing `/`). The Connect screen displays the precise value to register.
 
 - **Continuous trainer:** questions keep coming — pick **Shuffle** or **In playlist order** at the start,
   answer as many as you want, and press **Stop** any time for a summary (answered, accuracy, best streak).
-- **Songs** come from the playlist link you paste. Unplayable/local/podcast items are skipped.
-- **Wrong answers are "smart":** the app prefers decoys that share a **genre** and sit in a similar
-  **popularity** band as the real artist. If the playlist doesn't have enough similar acts, it pulls more
-  via Spotify's artist **genre search**. (Spotify's dedicated *related-artists* endpoint was deprecated for
-  new apps in Nov 2024, so similarity is derived from genre + popularity instead.)
-- **Trivia** is synthesized from core metadata: release year, album, track number, artist genres, follower
-  count, popularity, duration, explicit flag, and featured artists.
+- **Songs** come from the playlist link you paste — **it must be a playlist you own or collaborate on**.
+  Since Spotify's February 2026 dev-mode changes, the API only returns track lists for your own/collaborative
+  playlists; others return just metadata. Unplayable/local/podcast items are skipped.
+- **Wrong answers are "smart":** decoys are drawn from artists in the **same genre** as the real artist (via
+  Spotify's artist **genre search**), falling back to other artists from your playlist. (Spotify deprecated
+  *related-artists* and removed artist *popularity*/*followers* for dev-mode apps in the 2024–2026 changes,
+  so similarity is genre-based.)
+- **Trivia** is synthesized from the core metadata still available: release year, album, track number, artist
+  genres, duration, explicit flag, and featured artists.
 
 ## Privacy
 
@@ -107,5 +109,5 @@ python -m http.server 8000      # then open http://127.0.0.1:8000/
 | `INVALID_CLIENT` / redirect error | The hosted URL must exactly match a Redirect URI in your Spotify app (mind the trailing `/`). |
 | Login loops or "user not registered" | Add your account under the app's **User Management** in the dashboard. |
 | No sound / "Premium required" | Playback needs Spotify **Premium**; also allow the browser a moment to start the player. |
-| "No playable tracks" | Try another playlist (some are region-restricted or full of local files). |
-| Only 2–3 answer options | The playlist had very few distinct artists; use a richer playlist. |
+| `API 403 … /playlists/…/items` or "No tracks returned" | Spotify only returns tracks for playlists **you own or collaborate on** (Feb 2026 dev-mode rule). Use one of your own playlists. |
+| Only 2–3 answer options | The artist had no genre data and the playlist has few artists; use a richer playlist. |
