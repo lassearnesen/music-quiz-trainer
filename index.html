@@ -95,6 +95,14 @@
   .trivia{list-style:none; padding:0; margin:16px 0 0}
   .trivia li{padding:10px 12px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; background:var(--panel2); font-size:14px}
   .trivia li::before{content:"♪"; color:var(--green); margin-right:9px}
+  .artist-info{display:flex; gap:14px; align-items:flex-start; margin-top:16px; padding-top:14px; border-top:1px solid var(--line)}
+  .artist-info .ai-img{width:72px; height:72px; border-radius:50%; object-fit:cover; background:var(--panel2); flex:none}
+  .ai-head{font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted)}
+  .ai-name{font-weight:700; font-size:16px; margin-top:2px}
+  .ai-active{font-size:13px; margin-top:4px}
+  .ai-genres{font-size:13px; margin-top:2px}
+  .ai-link{display:inline-block; margin-top:9px; color:var(--green); text-decoration:none; font-weight:600; font-size:13px}
+  .ai-link:hover{text-decoration:underline}
   /* results */
   .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; text-align:center; margin:6px 0 18px}
   .stat{background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:16px 8px}
@@ -207,6 +215,16 @@
         </div>
       </div>
       <ul id="fbTrivia" class="trivia"></ul>
+      <div id="fbArtistInfo" class="artist-info">
+        <img id="aiImg" class="ai-img" alt="" src="">
+        <div class="ai-body">
+          <div class="ai-head">About the artist</div>
+          <div id="aiName" class="ai-name"></div>
+          <div id="aiActive" class="ai-active muted"></div>
+          <div id="aiGenres" class="ai-genres muted"></div>
+          <a id="aiLink" class="ai-link" target="_blank" rel="noopener" style="display:none">Open on Spotify ↗</a>
+        </div>
+      </div>
       <button id="nextBtn" class="btn block">Next song ▶</button>
     </div>
   </section>
@@ -245,7 +263,7 @@
   // ---------- state ----------
   var S={
     user:null, player:null, deviceId:null, token:null, isPlaying:false,
-    tracks:[], artistInfo:{}, artistPool:[], genreCache:{},
+    tracks:[], artistInfo:{}, artistSpan:{}, artistPool:[], genreCache:{},
     sess:{answered:0,correct:0,streak:0,best:0,order:'shuffle',random:false},
     queue:[], qpos:0, current:null, lastPlaylistId:null
   };
@@ -379,9 +397,35 @@
   function ensureArtist(id){
     if(S.artistInfo[id])return Promise.resolve(S.artistInfo[id]);
     return api('/artists/'+id).then(function(a){
-      var info={name:(a&&a.name)||'',genres:(a&&a.genres)||[]};
+      var info={
+        name:(a&&a.name)||'',
+        genres:(a&&a.genres)||[],
+        image:(a&&a.images&&a.images[0]&&a.images[0].url)||'',
+        url:(a&&a.external_urls&&a.external_urls.spotify)||''
+      };
       S.artistInfo[id]=info;return info;
-    }).catch(function(){var info={name:'',genres:[]};S.artistInfo[id]=info;return info;});
+    }).catch(function(){var info={name:'',genres:[],image:'',url:''};S.artistInfo[id]=info;return info;});
+  }
+
+  // Spotify exposes no "years active" field, so approximate it from the release history.
+  function ensureArtistSpan(id){
+    if(S.artistSpan[id])return Promise.resolve(S.artistSpan[id]);
+    var years=[],count=0,guard=0;
+    function page(u){
+      return api(u).then(function(d){
+        (d.items||[]).forEach(function(al){
+          count++;
+          var y=parseInt((((al&&al.release_date)||'')+'').slice(0,4),10);
+          if(y)years.push(y);
+        });
+        guard++;
+        if(d.next&&guard<5)return page(d.next);
+      });
+    }
+    return page('/artists/'+id+'/albums?include_groups=album,single&limit=50').then(function(){
+      var span={count:count,first:years.length?Math.min.apply(null,years):null,last:years.length?Math.max.apply(null,years):null};
+      S.artistSpan[id]=span;return span;
+    }).catch(function(){var span={count:0,first:null,last:null};S.artistSpan[id]=span;return span;});
   }
 
   function buildArtistPool(tracks){
@@ -561,6 +605,9 @@
     $('fbBanner').textContent='';$('fbBanner').className='banner';
     $('fbTrack').textContent='';$('fbArtist').textContent='';$('fbTrivia').innerHTML='';
     $('fbCover').removeAttribute('src');$('fbCover').style.visibility='hidden';
+    $('aiName').textContent='';$('aiActive').textContent='';$('aiGenres').textContent='';
+    $('aiImg').removeAttribute('src');$('aiImg').style.display='none';
+    $('aiLink').style.display='none';
   }
 
   function renderQuizLoading(){
@@ -608,12 +655,10 @@
   // ---------- feedback + trivia ----------
   function buildTrivia(t){
     var lines=[];
-    var ai=S.artistInfo[t.artists[0].id]||{};
     var year=((t.album&&t.album.release_date)||'').slice(0,4);
     if(year)lines.push('Released in '+year+'.');
     if(t.album&&t.album.name)lines.push('From the album \u201c'+t.album.name+'\u201d'+(t.album.total_tracks?(' ('+t.album.total_tracks+' tracks)'):'')+'.');
     if(t.track_number)lines.push('Track #'+t.track_number+' on the album.');
-    if(ai.genres&&ai.genres.length)lines.push(t.artists[0].name+' is tagged '+ai.genres.slice(0,3).map(cap).join(', ')+'.');
     if(t.duration_ms)lines.push('Length: '+fmtDur(t.duration_ms)+'.');
     if(t.explicit)lines.push('Marked explicit.');
     if(t.artists.length>1)lines.push('Features '+t.artists.slice(1).map(function(a){return a.name;}).join(', ')+'.');
@@ -635,8 +680,30 @@
     var ul=$('fbTrivia');ul.innerHTML='';
     buildTrivia(t).forEach(function(line){var li=document.createElement('li');li.textContent=line;ul.appendChild(li);});
     if('mediaSession' in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:t.artists.map(function(a){return a.name;}).join(', '),album:(t.album&&t.album.name)||'',artwork:img?[{src:img,sizes:'300x300',type:'image/jpeg'}]:[]});}catch(e){}}
+    renderArtistInfo(t.artists[0]);
     var fb=$('feedback');fb.style.display='block';
     if(fb.scrollIntoView)fb.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+
+  function activeLine(span){
+    if(!span||!span.first)return 'Active period: not published in Spotify\u2019s API.';
+    var period=(span.first===span.last)?(''+span.first):(span.first+'\u2013'+span.last);
+    return 'Active on Spotify: '+period+(span.count?(' \u00b7 '+span.count+' release'+(span.count>1?'s':'')):'');
+  }
+
+  function renderArtistInfo(artist){
+    var info=S.artistInfo[artist.id]||{};
+    $('aiName').textContent=artist.name;
+    var aiImg=$('aiImg');
+    if(info.image){aiImg.src=info.image;aiImg.style.display='';}else{aiImg.removeAttribute('src');aiImg.style.display='none';}
+    $('aiGenres').textContent=(info.genres&&info.genres.length)?('Genres: '+info.genres.slice(0,4).map(cap).join(', ')):'';
+    var link=$('aiLink');
+    if(info.url){link.href=info.url;link.style.display='';}else{link.style.display='none';}
+    var act=$('aiActive');act.textContent='Finding active period\u2026';
+    ensureArtistSpan(artist.id).then(function(span){
+      if(!S.current||!S.current.track||S.current.track.artists[0].id!==artist.id)return;
+      act.textContent=activeLine(span);
+    });
   }
 
   function advance(){nextQuestion();}

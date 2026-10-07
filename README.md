@@ -78,8 +78,12 @@ trailing `/`). The Connect screen displays the precise value to register.
   Spotify's artist **genre search**), falling back to other artists from your playlist. (Spotify deprecated
   *related-artists* and removed artist *popularity*/*followers* for dev-mode apps in the 2024–2026 changes,
   so similarity is genre-based.)
-- **Trivia** is synthesized from the core metadata still available: release year, album, track number, artist
-  genres, duration, explicit flag, and featured artists.
+- **Trivia** is synthesized from the core metadata still available: release year, album, track number,
+  duration, explicit flag, and featured artists.
+- **About the artist** panel: after you answer, it shows the artist's photo, genres, and a link to their
+  Spotify profile, plus an **approximate active period**. Spotify's API has no official "years active" or
+  biography field, so the active period is derived from the span of their releases on Spotify (earliest to
+  latest release year, via `GET /artists/{id}/albums`).
 
 ## Privacy
 
