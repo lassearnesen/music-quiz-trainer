@@ -103,6 +103,8 @@
   .ai-genres{font-size:13px; margin-top:2px}
   .ai-link{display:inline-block; margin-top:9px; color:var(--green); text-decoration:none; font-weight:600; font-size:13px}
   .ai-link:hover{text-decoration:underline}
+  .ai-bio{font-size:13px; color:var(--txt); margin:9px 0 0; line-height:1.55}
+  .src-group{margin:0}
   /* results */
   .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; text-align:center; margin:6px 0 18px}
   .stat{background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:16px 8px}
@@ -161,16 +163,67 @@
     </div>
     <h2>Start training</h2>
     <div class="card">
-      <label for="playlistUrl">Playlist link</label>
-      <input id="playlistUrl" type="text" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" spellcheck="false">
-      <p class="muted" style="margin:6px 0 0;font-size:13px">Use a playlist you <b>own or collaborate on</b> — Spotify only shares tracks for those.</p>
+      <label for="sourceMode">Quiz source</label>
+      <select id="sourceMode">
+        <option value="playlist" selected>Paste a playlist link</option>
+        <option value="myplaylist">One of my playlists</option>
+        <option value="liked">My Liked Songs</option>
+        <option value="top">My Top Tracks</option>
+        <option value="recent">Recently played</option>
+        <option value="decade">By decade</option>
+        <option value="genre">By genre</option>
+        <option value="artist">Drill an artist</option>
+        <option value="misses">Drill my misses</option>
+      </select>
+      <div class="spacer"></div>
+      <div id="src-playlist" class="src-group">
+        <label for="playlistUrl">Playlist link</label>
+        <input id="playlistUrl" type="text" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" spellcheck="false">
+        <p class="muted" style="margin:6px 0 0;font-size:13px">Use a playlist you <b>own or collaborate on</b> — Spotify only shares tracks for those.</p>
+      </div>
+      <div id="src-myplaylist" class="src-group" style="display:none">
+        <label for="myPlaylistSel">Your playlists</label>
+        <select id="myPlaylistSel"><option value="">Loading…</option></select>
+      </div>
+      <div id="src-top" class="src-group" style="display:none">
+        <label for="topRange">Time range</label>
+        <select id="topRange">
+          <option value="short_term">Last 4 weeks</option>
+          <option value="medium_term" selected>Last 6 months</option>
+          <option value="long_term">All time</option>
+        </select>
+      </div>
+      <div id="src-decade" class="src-group" style="display:none">
+        <label for="decadeSel">Decade</label>
+        <select id="decadeSel">
+          <option value="1960-1969">1960s</option>
+          <option value="1970-1979">1970s</option>
+          <option value="1980-1989">1980s</option>
+          <option value="1990-1999">1990s</option>
+          <option value="2000-2009" selected>2000s</option>
+          <option value="2010-2019">2010s</option>
+          <option value="2020-2029">2020s</option>
+        </select>
+      </div>
+      <div id="src-genre" class="src-group" style="display:none">
+        <label for="genreInput">Genre</label>
+        <input id="genreInput" type="text" placeholder="e.g. rock, hip hop, jazz" autocomplete="off">
+      </div>
+      <div id="src-artist" class="src-group" style="display:none">
+        <label for="artistInput">Artist to drill</label>
+        <input id="artistInput" type="text" placeholder="e.g. Queen" autocomplete="off">
+      </div>
+      <div id="src-misses" class="src-group" style="display:none">
+        <p class="muted" id="missesInfo" style="margin:0 0 8px;font-size:13px">Re-quiz the songs you've missed.</p>
+        <button id="clearMissesBtn" class="btn ghost" type="button" style="padding:6px 10px">Clear misses</button>
+      </div>
       <div class="spacer"></div>
       <div class="row">
         <div>
           <label for="orderMode">Playback order</label>
           <select id="orderMode">
             <option value="shuffle" selected>Shuffle</option>
-            <option value="order">In playlist order</option>
+            <option value="order">In order</option>
           </select>
         </div>
         <div>
@@ -182,7 +235,7 @@
         </div>
       </div>
       <div class="spacer"></div><div class="spacer"></div>
-      <button id="startBtn" class="btn block">Load playlist &amp; start</button>
+      <button id="startBtn" class="btn block">Start</button>
       <p id="setupStatus" class="muted center" style="margin:12px 0 0"></p>
     </div>
   </section>
@@ -225,6 +278,8 @@
           <div id="aiActive" class="ai-active muted"></div>
           <div id="aiGenres" class="ai-genres muted"></div>
           <a id="aiLink" class="ai-link" target="_blank" rel="noopener" style="display:none">Open on Spotify ↗</a>
+          <p id="aiBio" class="ai-bio"></p>
+          <a id="aiWiki" class="ai-link" target="_blank" rel="noopener" style="display:none">Read more on Wikipedia ↗</a>
         </div>
       </div>
       <button id="nextBtn" class="btn block">Next song ▶</button>
@@ -259,13 +314,15 @@
   var API='https://api.spotify.com/v1';
   var SCOPES=['streaming','user-read-email','user-read-private',
     'user-read-playback-state','user-modify-playback-state',
-    'playlist-read-private','playlist-read-collaborative'];
-  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st'};
+    'playlist-read-private','playlist-read-collaborative',
+    'user-top-read','user-follow-read','user-library-read','user-read-recently-played'];
+  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st',misses:'mqt_misses'};
 
   // ---------- state ----------
   var S={
     user:null, player:null, deviceId:null, token:null, isPlaying:false,
-    tracks:[], artistInfo:{}, artistSpan:{}, artistPool:[], genreCache:{},
+    tracks:[], artistInfo:{}, artistSpan:{}, artistBio:{}, artistPool:[], genreCache:{},
+    userArtists:null, myPlaylists:null, needReconnect:false,
     sess:{answered:0,correct:0,streak:0,best:0,order:'shuffle',random:false},
     queue:[], qpos:0, current:null, lastPlaylistId:null
   };
@@ -395,6 +452,107 @@
     return fetchAll('from_token').catch(function(){return fetchAll('');});
   }
 
+  // ---------- quiz sources (Feb 2026: use endpoints that still work in dev mode) ----------
+  function mapTracks(items){return (items||[]).map(function(it){return it&&(it.track||it.item||it);});}
+  function usableTrack(t){
+    if(!t||t.type!=='track'||t.is_local||!t.id||!t.uri)return false;
+    if(t.is_playable===false)return false;
+    if(!t.artists||!t.artists.length||!t.artists[0].id)return false;
+    return true;
+  }
+  function dedupeTracks(list){var seen={},out=[];(list||[]).forEach(function(t){if(t&&t.id&&!seen[t.id]){seen[t.id]=1;out.push(t);}});return out;}
+  function flagReconnect(e){if(e&&/\b403\b/.test(e.message||''))S.needReconnect=true;}
+
+  function loadLiked(){
+    return api('/me/tracks?limit=50&market=from_token').then(function(first){
+      var total=(first&&first.total)||0;var out=mapTracks(first&&first.items);
+      if(total<=50)return out;
+      var maxWin=Math.floor((total-1)/50),offs=[];
+      while(offs.length<4&&offs.length<maxWin){var o=(1+Math.floor(Math.random()*maxWin))*50;if(offs.indexOf(o)<0)offs.push(o);}
+      return Promise.all(offs.map(function(o){return api('/me/tracks?limit=50&offset='+o+'&market=from_token').then(function(d){return mapTracks(d.items);}).catch(function(){return [];});})).then(function(arrs){arrs.forEach(function(a){out=out.concat(a);});return out;});
+    });
+  }
+  function loadTop(range){return api('/me/top/tracks?limit=50&time_range='+(range||'medium_term')).then(function(d){return mapTracks(d.items);});}
+  function loadRecent(){return api('/me/player/recently-played?limit=50').then(function(d){return mapTracks(d.items);});}
+  function loadMyPlaylists(){
+    if(S.myPlaylists)return Promise.resolve(S.myPlaylists);
+    var out=[],guard=0;
+    function page(u){return api(u).then(function(d){(d.items||[]).forEach(function(p){if(p&&p.id)out.push({id:p.id,name:p.name||'(untitled)',owner:(p.owner&&p.owner.id)||'',collaborative:!!p.collaborative});});guard++;if(d.next&&guard<4)return page(d.next);});}
+    return page('/me/playlists?limit=50').then(function(){S.myPlaylists=out;return out;});
+  }
+  function loadSearchTracks(q){
+    var out=[],guard=0;
+    function page(offset){return api('/search?type=track&limit=10&offset='+offset+'&market=from_token&q='+encodeURIComponent(q)).then(function(d){out=out.concat((d.tracks&&d.tracks.items)||[]);guard++;if(d.tracks&&d.tracks.next&&guard<5)return page(offset+10);});}
+    return page(0).then(function(){return out;});
+  }
+
+  function loadSource(){
+    var type=$('sourceMode').value;
+    if(type==='playlist'){var id=parsePlaylistId($('playlistUrl').value);if(!id)return Promise.reject(new Error('That doesn\u2019t look like a playlist link.'));S.lastPlaylistId=id;return loadPlaylist(id);}
+    if(type==='myplaylist'){var pid=$('myPlaylistSel').value;if(!pid)return Promise.reject(new Error('Pick one of your playlists.'));S.lastPlaylistId=pid;return loadPlaylist(pid);}
+    if(type==='liked')return loadLiked();
+    if(type==='top')return loadTop($('topRange').value);
+    if(type==='recent')return loadRecent();
+    if(type==='decade')return loadSearchTracks('year:'+$('decadeSel').value);
+    if(type==='genre'){var g=($('genreInput').value||'').trim();if(!g)return Promise.reject(new Error('Enter a genre.'));return loadSearchTracks('genre:"'+g+'"').then(function(r){return (r&&r.length)?r:loadSearchTracks(g);});}
+    if(type==='artist'){var a=($('artistInput').value||'').trim();if(!a)return Promise.reject(new Error('Enter an artist to drill.'));return loadSearchTracks('artist:"'+a+'"');}
+    if(type==='misses')return loadMisses();
+    return Promise.reject(new Error('Pick a source.'));
+  }
+  function sourceEmptyMessage(){
+    var type=$('sourceMode').value;
+    if(S.needReconnect)return 'New permissions needed \u2014 please Log out and reconnect, then try again.';
+    if(type==='playlist'||type==='myplaylist')return 'No tracks. Spotify only shares tracks for playlists you own or collaborate on \u2014 try one of your own.';
+    if(type==='misses')return 'No missed songs yet \u2014 play a round first, then come back to drill them.';
+    return 'No playable tracks found for that source.';
+  }
+
+  // ---------- distractor pool from the user's own artists (Top + Followed, both include genres) ----------
+  function ensureUserArtists(){
+    if(S.userArtists)return Promise.resolve(S.userArtists);
+    var map={};
+    function addA(arr){(arr||[]).forEach(function(a){if(a&&a.id&&!map[a.id])map[a.id]={id:a.id,name:a.name,genres:a.genres||[]};});}
+    var top=api('/me/top/artists?limit=50').then(function(d){addA(d.items);}).catch(function(e){flagReconnect(e);});
+    var foll=api('/me/following?type=artist&limit=50').then(function(d){addA(d.artists&&d.artists.items);}).catch(function(e){flagReconnect(e);});
+    return Promise.all([top,foll]).then(function(){S.userArtists=Object.keys(map).map(function(k){return map[k];});return S.userArtists;});
+  }
+
+  // ---------- spaced repetition: missed songs saved locally ----------
+  function getMisses(){try{return JSON.parse(localStorage.getItem(LS.misses)||'[]');}catch(e){return [];}}
+  function setMisses(a){try{localStorage.setItem(LS.misses,JSON.stringify((a||[]).slice(0,500)));}catch(e){}}
+  function minTrack(t){return {id:t.id,uri:t.uri,name:t.name,type:'track',duration_ms:t.duration_ms,explicit:t.explicit,track_number:t.track_number,external_urls:t.external_urls,artists:(t.artists||[]).map(function(a){return {id:a.id,name:a.name};}),album:t.album?{name:t.album.name,album_type:t.album.album_type,release_date:t.album.release_date,total_tracks:t.album.total_tracks,images:t.album.images,external_urls:t.album.external_urls}:null};}
+  function recordMiss(t){if(!t||!t.id)return;var m=getMisses(),f=null;for(var i=0;i<m.length;i++){if(m[i].track&&m[i].track.id===t.id){f=m[i];break;}}if(f){f.miss=(f.miss||0)+1;f.last=Date.now();}else{m.push({track:minTrack(t),miss:1,last:Date.now()});}setMisses(m);}
+  function recordHit(t){if(!t||!t.id)return;var m=getMisses(),ch=false;for(var i=m.length-1;i>=0;i--){if(m[i].track&&m[i].track.id===t.id){m[i].miss=(m[i].miss||1)-1;if(m[i].miss<=0)m.splice(i,1);ch=true;}}if(ch)setMisses(m);}
+  function loadMisses(){var m=getMisses().slice().sort(function(a,b){return (b.miss||0)-(a.miss||0);});return Promise.resolve(m.map(function(x){return x.track;}));}
+
+  // ---------- artist bio (Wikipedia; the only non-Spotify request) ----------
+  function ensureArtistBio(id,name,genre){
+    if(S.artistBio[id]!==undefined)return Promise.resolve(S.artistBio[id]);
+    if(!name){S.artistBio[id]=null;return Promise.resolve(null);}
+    var q=name+' '+(genre||'musician');
+    var url='https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&generator=search&gsrsearch='+encodeURIComponent(q)+'&gsrlimit=5&prop=extracts%7Cdescription%7Cinfo&inprop=url&exintro=1&explaintext=1&exchars=700';
+    var kw=/\b(band|singer|musician|rapper|group|duo|dj|producer|songwriter|guitarist|drummer|hip hop|rock|pop|jazz|metal|album|music|recording artist)\b/i;
+    return fetch(url).then(function(r){return r.json();}).then(function(d){
+      var pages=(d&&d.query&&d.query.pages)||{};var best=null,bestScore=-1;
+      Object.keys(pages).forEach(function(k){
+        var p=pages[k];var ex=p.extract||'';var desc=p.description||'';
+        if(!ex||/\bmay refer to\b/i.test(ex))return;
+        var score=0;
+        if(kw.test(desc))score+=3;
+        if(kw.test(ex))score+=2;
+        if(genre&&ex.toLowerCase().indexOf(norm(genre))>=0)score+=2;
+        if(norm(p.title)===norm(name))score+=2;
+        if(typeof p.index==='number')score+=(5-Math.min(p.index,5))*0.1;
+        if(score>bestScore){bestScore=score;best=p;}
+      });
+      if(!best||bestScore<2){S.artistBio[id]=null;return null;}
+      var text=(best.extract||'').trim();
+      if(text.length>520)text=text.slice(0,500).replace(/\s+\S*$/,'')+'\u2026';
+      var bio={text:text,url:best.fullurl||('https://en.wikipedia.org/wiki/'+encodeURIComponent((best.title||'').replace(/ /g,'_')))};
+      S.artistBio[id]=bio;return bio;
+    }).catch(function(){S.artistBio[id]=null;return null;});
+  }
+
   // Batch /artists?ids= was removed in Feb 2026; fetch individually, falling back to search (dev-mode safe).
   function ensureArtist(id,name){
     if(S.artistInfo[id])return Promise.resolve(S.artistInfo[id]);
@@ -472,7 +630,7 @@
     return one(0,[]).then(function(all){return shuffle(all);});
   }
 
-  // Popularity/followers were removed in Feb 2026; similarity now uses genres only.
+  // Prefer same-genre artists the user knows (Top/Followed), then genre search, then source artists.
   function pickDistractors(track){
     var correct=track.artists[0];
     var coIds={};track.artists.forEach(function(a){coIds[a.id]=1;});
@@ -480,17 +638,23 @@
     Object.keys(coIds).forEach(function(k){usedId[k]=1;});
     var res=[];
     function add(c){if(!c||!c.id||usedId[c.id]||usedName[norm(c.name)])return;usedId[c.id]=1;usedName[norm(c.name)]=1;res.push({id:c.id,name:c.name});}
-    var pool=S.artistPool.filter(function(a){return !coIds[a.id];});
+    var userPool=(S.userArtists||[]).filter(function(a){return !coIds[a.id];});
+    var srcPool=S.artistPool.filter(function(a){return !coIds[a.id];});
     return ensureArtist(correct.id,correct.name).then(function(info){
       var genres=(info&&info.genres)||[];
+      function shares(a){var g=a.genres||[];return genres.length&&g.some(function(x){return genres.indexOf(x)>=0;});}
+      // Tier 1: same-genre artists the user knows
+      shuffle(userPool.filter(shares)).forEach(function(a){if(res.length<3)add(a);});
       var p=Promise.resolve();
-      // Tier 1: same-genre artists via search (plausible "similar" decoys)
-      if(genres.length){
+      // Tier 2: same-genre via search (secondary)
+      if(res.length<3&&genres.length){
         p=genreSearchArtists(genres).then(function(found){found.forEach(function(a){if(res.length<3)add(a);});});
       }
       return p.then(function(){
-        // Tier 2: fall back to other artists from the playlist
-        if(res.length<3){shuffle(pool);pool.forEach(function(a){if(res.length<3)add(a);});}
+        // Tier 3: any artists the user knows
+        if(res.length<3)shuffle(userPool).forEach(function(a){if(res.length<3)add(a);});
+        // Tier 4: artists from the current source
+        if(res.length<3)shuffle(srcPool).forEach(function(a){if(res.length<3)add(a);});
         return res.slice(0,3);
       });
     });
@@ -565,17 +729,18 @@
 
   // ---------- quiz flow ----------
   function startQuiz(){
-    var raw=$('playlistUrl').value;
-    var id=parsePlaylistId(raw);
-    if(!id){toast('That doesn\u2019t look like a playlist link.');return;}
     S.sess.order=$('orderMode').value==='order'?'order':'shuffle';
     S.sess.random=$('startMode').value==='1';
     var status=$('setupStatus');
-    $('startBtn').disabled=true;status.textContent='Loading playlist\u2026';
-    S.lastPlaylistId=id;S.tracks=[];S.artistInfo={};S.artistPool=[];S.genreCache={};
-    loadPlaylist(id).then(function(tracks){
-      if(!tracks.length)throw new Error('No tracks returned. Spotify now only shares tracks for playlists you own or collaborate on \u2014 try one of your own playlists.');
+    $('startBtn').disabled=true;status.textContent='Loading tracks\u2026';
+    S.tracks=[];S.artistInfo={};S.artistSpan={};S.artistBio={};S.artistPool=[];S.genreCache={};
+    loadSource().then(function(tracks){
+      tracks=dedupeTracks((tracks||[]).filter(usableTrack)).slice(0,300);
+      if(!tracks.length)throw new Error(sourceEmptyMessage());
       S.tracks=tracks;buildArtistPool(tracks);
+      status.textContent='Loading similar artists\u2026';
+      return ensureUserArtists();
+    }).then(function(){
       status.textContent='Starting player\u2026 (allow a moment)';
       return ensurePlayer();
     }).then(function(){
@@ -584,8 +749,9 @@
       status.textContent='';$('startBtn').disabled=false;
       return nextQuestion();
     }).catch(function(e){
+      flagReconnect(e);
       status.textContent='';$('startBtn').disabled=false;
-      toast(e.message||'Could not start the quiz.');
+      toast(S.needReconnect?'New permissions needed \u2014 please Log out and reconnect.':(e&&e.message||'Could not start.'));
     });
   }
 
@@ -633,6 +799,7 @@
     $('aiImg').removeAttribute('src');$('aiImg').style.display='none';
     $('aiLink').style.display='none';
     $('fbTrackLink').style.display='none';
+    $('aiBio').textContent='';$('aiWiki').style.display='none';
   }
 
   function renderQuizLoading(){
@@ -668,8 +835,8 @@
     var right=opt&&opt.id===correct.id;
     S.current.isRight=right;
     S.sess.answered++;
-    if(right){S.sess.correct++;S.sess.streak++;S.sess.best=Math.max(S.sess.best,S.sess.streak);}
-    else{S.sess.streak=0;}
+    if(right){S.sess.correct++;S.sess.streak++;S.sess.best=Math.max(S.sess.best,S.sess.streak);recordHit(S.current.track);}
+    else{S.sess.streak=0;recordMiss(S.current.track);}
     var btns=$('options').querySelectorAll('.opt');
     btns.forEach(function(b){
       b.disabled=true;
@@ -738,6 +905,13 @@
       if(!S.current||!S.current.track||S.current.track.artists[0].id!==artist.id)return;
       act.textContent=activeLine(span);
     });
+    var bioEl=$('aiBio'),wikiEl=$('aiWiki');
+    bioEl.textContent='Loading bio\u2026';wikiEl.style.display='none';
+    ensureArtistBio(artist.id,artist.name,(info&&info.genres&&info.genres[0])||'').then(function(bio){
+      if(!S.current||!S.current.track||S.current.track.artists[0].id!==artist.id)return;
+      if(bio&&bio.text){bioEl.textContent=bio.text;wikiEl.href=bio.url;wikiEl.style.display='';}
+      else{bioEl.textContent='';wikiEl.style.display='none';}
+    });
   }
 
   function advance(){nextQuestion();}
@@ -763,8 +937,26 @@
   }
 
   // ---------- screen wiring ----------
+  function populateMyPlaylists(){
+    var sel=$('myPlaylistSel');if(!sel)return;
+    sel.innerHTML='<option value="">Loading\u2026</option>';
+    loadMyPlaylists().then(function(list){
+      var me=(S.user&&S.user.id)||'';
+      var own=list.filter(function(p){return p.collaborative||(me&&p.owner===me);});
+      sel.innerHTML='';
+      if(!own.length){var o=document.createElement('option');o.value='';o.textContent='No readable playlists found';sel.appendChild(o);return;}
+      own.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);});
+    }).catch(function(e){flagReconnect(e);sel.innerHTML='<option value="">Could not load (reconnect?)</option>';});
+  }
+  function updateSourceUI(){
+    var type=$('sourceMode')?$('sourceMode').value:'playlist';
+    ['playlist','myplaylist','top','decade','genre','artist','misses'].forEach(function(g){var el=$('src-'+g);if(el)el.style.display=(g===type)?'':'none';});
+    if(type==='myplaylist')populateMyPlaylists();
+    if(type==='misses'){var n=getMisses().length;$('missesInfo').textContent=n?('You have '+n+' missed song'+(n>1?'s':'')+' saved to drill.'):'No missed songs yet \u2014 play a round first, then come back.';}
+  }
   function showSetup(){
     $('userName').textContent=S.user&&S.user.display_name?('Hi, '+S.user.display_name):'Connected';
+    updateSourceUI();
     screen('screen-setup');
   }
   function showConnect(){screen('screen-connect');}
@@ -788,6 +980,8 @@
     };
     $('logoutBtn').onclick=logout;
     $('startBtn').onclick=startQuiz;
+    $('sourceMode').onchange=updateSourceUI;
+    $('clearMissesBtn').onclick=function(){setMisses([]);updateSourceUI();toast('Misses cleared.');};
     $('playBtn').onclick=togglePlay;
     $('replayBtn').onclick=replay;
     $('skipBtn').onclick=skip;

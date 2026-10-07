@@ -57,8 +57,10 @@ trailing `/`). The Connect screen displays the precise value to register.
 
 1. Open your hosted URL.
 2. Paste your **Client ID**, confirm the redirect URI is registered, and click **Connect Spotify**.
-3. Paste a **playlist link** (e.g. `https://open.spotify.com/playlist/...`), choose **Shuffle** or
-   **In playlist order**, and start.
+3. Pick a **quiz source** — paste a playlist link, or choose **your playlists**, **Liked Songs**, **Top
+   Tracks**, **Recently played**, a **decade**, a **genre**, **drill an artist**, or **drill your misses** —
+   choose **Shuffle** or **In order**, and start.
+   *(First time using the non‑playlist sources, log out and reconnect once to grant the new read permissions.)*
 4. Answer song after song — you get instant feedback + trivia the moment you pick. Keep going as long as you
    like, then press **Stop** for a session summary. 🎵
 
@@ -73,24 +75,29 @@ trailing `/`). The Connect screen displays the precise value to register.
   answer as many as you want, and press **Stop** any time for a summary (answered, accuracy, best streak).
 - **Recall first:** the four choices stay hidden until you press **Show options**, so you try to name the
   artist from memory before revealing the multiple-choice answers.
-- **Songs** come from the playlist link you paste — **it must be a playlist you own or collaborate on**.
-  Since Spotify's February 2026 dev-mode changes, the API only returns track lists for your own/collaborative
-  playlists; others return just metadata. Unplayable/local/podcast items are skipped.
-- **Wrong answers are "smart":** decoys are drawn from artists in the **same genre** as the real artist (via
-  Spotify's artist **genre search**), falling back to other artists from your playlist. (Spotify deprecated
-  *related-artists* and removed artist *popularity*/*followers* for dev-mode apps in the 2024–2026 changes,
-  so similarity is genre-based.)
+- **Many sources:** a pasted playlist link, **your own playlists**, **Liked Songs**, **Top Tracks** (with a
+  time range), **Recently played**, or **search‑built rounds** by **decade**, **genre**, or a single **artist**
+  to drill. Pasted/your playlists must be ones you **own or collaborate on** (Feb 2026 dev‑mode rule — others
+  return no tracks). Unplayable/local/podcast items are skipped.
+- **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
+  them (answering one correctly retires it). Clear them any time.
+- **Smarter wrong answers:** Spotify removed the *related-artists* API, so decoys are drawn from artists **you
+  know** — your **Top Artists** and **Followed Artists** (both include genres) — preferring the **same genre**
+  as the real artist, then genre search, then artists from the current source. Much more plausible than random
+  playlist filler.
 - **Trivia** is synthesized from the core metadata still available: release year, album/single type, track
   number, duration, explicit flag, and featured artists — plus a link to open the song on Spotify.
 - **About the artist** panel: after you answer, it shows the artist's photo, genres, a link to their Spotify
-  profile, and an **approximate active period** (oldest→newest release year). Spotify's API has no official
-  "years active"/biography field — and `GET /artists/{id}/albums` is blocked for dev-mode apps — so the range
-  is gathered from album **search** results for the artist (search still works in dev mode).
+  profile, a short **Wikipedia bio** (with a "Read more" link), and an **approximate active period**
+  (oldest→newest release year). Spotify's API has no official "years active"/biography field — and
+  `GET /artists/{id}/albums` is blocked for dev-mode apps — so the range is gathered from album **search**
+  results, and the bio comes from Wikipedia.
 
 ## Privacy
 
-- Your **Client ID** and Spotify **tokens** are stored only in your browser's `localStorage`. Nothing is sent
-  anywhere except directly to Spotify's own API endpoints. Log out to clear them.
+- Your **Client ID**, Spotify **tokens**, and your **missed‑songs** list are stored only in your browser's
+  `localStorage`. Requests go directly to Spotify's API, plus **Wikipedia** (the one non‑Spotify source, used
+  only to fetch artist bios). Log out to clear your tokens.
 - Auth uses the **Authorization Code + PKCE** flow (no client secret needed).
 
 ## Why not `file://`?
