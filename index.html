@@ -616,47 +616,38 @@
     S.artistPool=Object.keys(map).map(function(k){return map[k];});
   }
 
-  // ---------- distractors (tiered "similar") ----------
+  // ---------- distractors: same pool first (fair), broad catalog by genre to fill ----------
   function genreSearchArtists(genres){
     var gs=genres.slice(0,3);
-    function one(k,acc){
-      if(k>=gs.length)return Promise.resolve(acc);
-      var g=gs[k];
-      if(S.genreCache[g]){return one(k+1,acc.concat(S.genreCache[g]));}
-      return api('/search?type=artist&limit=10&q='+encodeURIComponent('genre:"'+g+'"'))
-        .then(function(d){var arr=((d.artists&&d.artists.items)||[]).map(function(a){return{id:a.id,name:a.name};});S.genreCache[g]=arr;return one(k+1,acc.concat(arr));})
-        .catch(function(){S.genreCache[g]=[];return one(k+1,acc);});
+    function fetchGenre(g){
+      if(S.genreCache[g])return Promise.resolve(S.genreCache[g]);
+      var a1=api('/search?type=artist&limit=10&q='+encodeURIComponent('genre:"'+g+'"')).then(function(d){return ((d.artists&&d.artists.items)||[]).map(function(a){return {id:a.id,name:a.name};});}).catch(function(){return [];});
+      var a2=api('/search?type=track&limit=10&q='+encodeURIComponent('genre:"'+g+'"')).then(function(d){var arr=[];((d.tracks&&d.tracks.items)||[]).forEach(function(t){(t.artists||[]).forEach(function(a){if(a&&a.id)arr.push({id:a.id,name:a.name});});});return arr;}).catch(function(){return [];});
+      return Promise.all([a1,a2]).then(function(r){var all=r[0].concat(r[1]);S.genreCache[g]=all;return all;});
     }
-    return one(0,[]).then(function(all){return shuffle(all);});
+    var acc=[],i=0;
+    function next(){if(i>=gs.length)return Promise.resolve(acc);return fetchGenre(gs[i++]).then(function(arr){acc=acc.concat(arr);return next();});}
+    return next().then(function(){return shuffle(acc);});
   }
 
-  // Prefer same-genre artists the user knows (Top/Followed), then genre search, then source artists.
+  // Decoys come from the SAME pool as the song (so the answer never stands out as the "odd one out"),
+  // then from Spotify's broad catalog by genre to fill small pools / single-artist drills. Not your library.
   function pickDistractors(track){
     var correct=track.artists[0];
     var coIds={};track.artists.forEach(function(a){coIds[a.id]=1;});
-    var usedId={};var usedName={};usedId[correct.id]=1;usedName[norm(correct.name)]=1;
+    var usedId={},usedName={};usedId[correct.id]=1;usedName[norm(correct.name)]=1;
     Object.keys(coIds).forEach(function(k){usedId[k]=1;});
     var res=[];
     function add(c){if(!c||!c.id||usedId[c.id]||usedName[norm(c.name)])return;usedId[c.id]=1;usedName[norm(c.name)]=1;res.push({id:c.id,name:c.name});}
-    var userPool=(S.userArtists||[]).filter(function(a){return !coIds[a.id];});
     var srcPool=S.artistPool.filter(function(a){return !coIds[a.id];});
+    // Tier 1: other artists from the same pool (same population as the answer)
+    shuffle(srcPool).forEach(function(a){if(res.length<3)add(a);});
+    if(res.length>=3)return Promise.resolve(res.slice(0,3));
+    // Tier 2: same-genre artists from the broad catalog to fill small pools / single-artist drills
     return ensureArtist(correct.id,correct.name).then(function(info){
       var genres=(info&&info.genres)||[];
-      function shares(a){var g=a.genres||[];return genres.length&&g.some(function(x){return genres.indexOf(x)>=0;});}
-      // Tier 1: same-genre artists the user knows
-      shuffle(userPool.filter(shares)).forEach(function(a){if(res.length<3)add(a);});
-      var p=Promise.resolve();
-      // Tier 2: same-genre via search (secondary)
-      if(res.length<3&&genres.length){
-        p=genreSearchArtists(genres).then(function(found){found.forEach(function(a){if(res.length<3)add(a);});});
-      }
-      return p.then(function(){
-        // Tier 3: any artists the user knows
-        if(res.length<3)shuffle(userPool).forEach(function(a){if(res.length<3)add(a);});
-        // Tier 4: artists from the current source
-        if(res.length<3)shuffle(srcPool).forEach(function(a){if(res.length<3)add(a);});
-        return res.slice(0,3);
-      });
+      if(!genres.length)return res.slice(0,3);
+      return genreSearchArtists(genres).then(function(found){found.forEach(function(a){if(res.length<3)add(a);});return res.slice(0,3);});
     });
   }
 
@@ -738,9 +729,6 @@
       tracks=dedupeTracks((tracks||[]).filter(usableTrack)).slice(0,300);
       if(!tracks.length)throw new Error(sourceEmptyMessage());
       S.tracks=tracks;buildArtistPool(tracks);
-      status.textContent='Loading similar artists\u2026';
-      return ensureUserArtists();
-    }).then(function(){
       status.textContent='Starting player\u2026 (allow a moment)';
       return ensurePlayer();
     }).then(function(){

@@ -81,10 +81,10 @@ trailing `/`). The Connect screen displays the precise value to register.
   return no tracks). Unplayable/local/podcast items are skipped.
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
   them (answering one correctly retires it). Clear them any time.
-- **Smarter wrong answers:** Spotify removed the *related-artists* API, so decoys are drawn from artists **you
-  know** — your **Top Artists** and **Followed Artists** (both include genres) — preferring the **same genre**
-  as the real artist, then genre search, then artists from the current source. Much more plausible than random
-  playlist filler.
+- **Fair wrong answers:** decoys come from the **same pool as the song** — other artists in the current
+  playlist/decade/genre round — so the answer never stands out as "the one that isn't from my library." For
+  small pools or single‑artist drills, same‑genre artists from Spotify's **broad catalog** fill in (Spotify
+  removed the *related-artists* API). Your listening history is **not** used for decoys.
 - **Trivia** is synthesized from the core metadata still available: release year, album/single type, track
   number, duration, explicit flag, and featured artists — plus a link to open the song on Spotify.
 - **About the artist** panel: after you answer, it shows the artist's photo, genres, a link to their Spotify
