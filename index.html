@@ -538,10 +538,10 @@
   function resolveCurated(list,onDone,wantUris,onUri,known){
     var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;
     var seenKey={},work=[];(list||[]).forEach(function(str){var s=splitSong(str);var k=norm(s.a)+'|'+norm(s.t);if(!seenKey[k]){seenKey[k]=1;work.push(str);}});
-    var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;
-    var pace=wantUris?140:0;var okStreak=0; // adaptive: speed up while clear, back off on 429
-    function onOk(){if(!wantUris)return;okStreak++;if(okStreak>=12){okStreak=0;if(pace>70)pace-=15;}}
-    function on429(){if(!wantUris)return;okStreak=0;pace=Math.min(1500,Math.max(pace*2,220));}
+    var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;var retried={};
+    var pace=wantUris?180:0;var okStreak=0; // adaptive: speed up while clear, back off on 429
+    function onOk(){if(!wantUris)return;okStreak++;if(okStreak>=12){okStreak=0;if(pace>80)pace-=15;}}
+    function on429(){if(!wantUris)return;okStreak=0;pace=Math.min(1800,Math.max(pace*2,260));}
     function persist(force){if(force||dirty>=12){setCuratedCache(cache);dirty=0;}}
     function report(){if(onDone)onDone(done,total,rl);}
     function emit(mt){if(!mt)return;out.push(mt);if(mt.uri){uris.push(mt.uri);if(onUri)onUri(mt.uri);}}
@@ -550,17 +550,24 @@
       var str=work[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
       if(known&&known[key]){done++;report();return worker();}
       if(cache[key]){emit(cache[key]);done++;report();return worker();}
-      var q='track:"'+s.t+'" artist:"'+s.a+'"';
-      var waited=false;
-      return api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q),null,true,function(sec){if(!waited){waited=true;waiters++;}on429();rl.until=Math.max(rl.until||0,Date.now()+sec*1000);rl.waiting=waiters;report();}).then(function(d){
-        var items=(d.tracks&&d.tracks.items)||[];var m=null;
-        for(var j=0;j<items.length;j++){var it=items[j];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(s.a))>=0||norm(s.a).indexOf(norm(a.name))>=0;})){m=it;break;}}
-        m=m||items[0]||null;
+      var na=norm(s.a),nt=norm(s.t);var q=s.t+' '+s.a;var waited=false,errd=false;
+      return api('/search?type=track&limit=8&q='+encodeURIComponent(q),null,true,function(sec){if(!waited){waited=true;waiters++;}on429();rl.until=Math.max(rl.until||0,Date.now()+sec*1000);rl.waiting=waiters;report();}).then(function(d){
+        var items=(d.tracks&&d.tracks.items)||[];var byA=null,byB=null;
+        for(var j=0;j<items.length;j++){var it=items[j];if(!it||!it.artists||!it.artists.length)continue;
+          var am=it.artists.some(function(a){var an=norm(a.name);return an.indexOf(na)>=0||na.indexOf(an)>=0;});
+          if(am){if(!byA)byA=it;var nm=norm(it.name);if(!byB&&(nm.indexOf(nt)>=0||nt.indexOf(nm)>=0))byB=it;}
+        }
+        var m=byB||byA||items[0]||null;
         if(m){var mt=minTrack(m);cache[key]=mt;dirty++;emit(mt);}
         onOk();
-      }).catch(function(){failed++;}).then(function(){if(waited){waiters--;if(waiters<0)waiters=0;}if(waiters<=0)rl.until=0;rl.waiting=waiters;rl.failed=failed;done++;persist(false);report();return sleep(pace).then(worker);});
+      }).catch(function(){errd=true;}).then(function(){
+        if(waited){waiters--;if(waiters<0)waiters=0;}if(waiters<=0)rl.until=0;rl.waiting=waiters;
+        if(errd&&!retried[key]){retried[key]=1;work.push(str);}
+        else{done++;if(errd)failed++;}
+        rl.failed=failed;persist(false);report();return sleep(pace).then(worker);
+      });
     }
-    var conc=wantUris?4:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
+    var conc=wantUris?3:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
     return Promise.all(ws).then(function(){persist(true);rl.failed=failed;rl.total=total;
       if(wantUris){var seen={},u=[];uris.forEach(function(x){if(x&&!seen[x]){seen[x]=1;u.push(x);}});return u;}
       return out;
