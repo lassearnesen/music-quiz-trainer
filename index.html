@@ -166,6 +166,7 @@
       <label for="sourceMode">Quiz source</label>
       <select id="sourceMode">
         <option value="playlist" selected>Paste a playlist link</option>
+        <option value="curated">Well-known hits by decade (curated)</option>
         <option value="myplaylist">One of my playlists</option>
         <option value="liked">My Liked Songs</option>
         <option value="top">My Top Tracks</option>
@@ -180,6 +181,18 @@
         <label for="playlistUrl">Playlist link</label>
         <input id="playlistUrl" type="text" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" spellcheck="false">
         <p class="muted" style="margin:6px 0 0;font-size:13px">Use a playlist you <b>own or collaborate on</b> — Spotify only shares tracks for those.</p>
+      </div>
+      <div id="src-curated" class="src-group" style="display:none">
+        <label for="curatedDecade">Decade</label>
+        <select id="curatedDecade">
+          <option value="all" selected>All decades (80s–now)</option>
+          <option value="1980s">1980s</option>
+          <option value="1990s">1990s</option>
+          <option value="2000s">2000s</option>
+          <option value="2010s">2010s</option>
+          <option value="2020s">2020s</option>
+        </select>
+        <p class="muted" style="margin:6px 0 0;font-size:13px">A hand‑picked mix of major artists and one‑hit wonders — <b>not</b> based on your listening.</p>
       </div>
       <div id="src-myplaylist" class="src-group" style="display:none">
         <label for="myPlaylistSel">Your playlists</label>
@@ -316,7 +329,7 @@
     'user-read-playback-state','user-modify-playback-state',
     'playlist-read-private','playlist-read-collaborative',
     'user-top-read','user-follow-read','user-library-read','user-read-recently-played'];
-  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st',misses:'mqt_misses'};
+  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st',misses:'mqt_misses',curated:'mqt_curated'};
 
   // ---------- state ----------
   var S={
@@ -502,6 +515,35 @@
     return one(0).then(function(){if(out.length<12)return loadSearchTracks('year:'+range,0).then(function(r){out=out.concat(r);return out;});return out;});
   }
 
+  // ---------- curated "well-known by decade" set (hand-picked, taste-neutral; titles resolved to Spotify) ----------
+  var CURATED={
+    "1980s":["Michael Jackson|Billie Jean","Michael Jackson|Beat It","Madonna|Like a Prayer","Madonna|Material Girl","Prince|When Doves Cry","Prince|Purple Rain","Whitney Houston|I Wanna Dance with Somebody (Who Loves Me)","Bruce Springsteen|Born in the U.S.A.","U2|With or Without You","Phil Collins|In the Air Tonight","Cyndi Lauper|Girls Just Want to Have Fun","Bon Jovi|Livin' on a Prayer","Guns N' Roses|Sweet Child O' Mine","The Police|Every Breath You Take","Duran Duran|Hungry Like the Wolf","Eurythmics|Sweet Dreams (Are Made of This)","Journey|Don't Stop Believin'","Def Leppard|Pour Some Sugar on Me","Dire Straits|Money for Nothing","Billy Idol|Rebel Yell","Tina Turner|What's Love Got to Do with It","Lionel Richie|All Night Long (All Night)","Daryl Hall & John Oates|You Make My Dreams","Culture Club|Karma Chameleon","Wham!|Wake Me Up Before You Go-Go","a-ha|Take On Me","Toto|Africa","Survivor|Eye of the Tiger","Rick Astley|Never Gonna Give You Up","INXS|Need You Tonight","Van Halen|Jump","New Order|Blue Monday","The Cure|Just Like Heaven","Pet Shop Boys|West End Girls","Kate Bush|Running Up That Hill (A Deal with God)","Dexys Midnight Runners|Come On Eileen","Soft Cell|Tainted Love","Men Without Hats|The Safety Dance","Nena|99 Luftballons","Dead or Alive|You Spin Me Round (Like a Record)","Falco|Rock Me Amadeus","Bobby McFerrin|Don't Worry Be Happy","Rockwell|Somebody's Watching Me","Katrina & The Waves|Walking on Sunshine","Modern English|I Melt with You","Toni Basil|Mickey"],
+    "1990s":["Nirvana|Smells Like Teen Spirit","Whitney Houston|I Will Always Love You","Mariah Carey|Fantasy","Backstreet Boys|I Want It That Way","Spice Girls|Wannabe","Britney Spears|...Baby One More Time","Oasis|Wonderwall","Radiohead|Creep","Pearl Jam|Alive","Red Hot Chili Peppers|Under the Bridge","Green Day|Basket Case","R.E.M.|Losing My Religion","Metallica|Enter Sandman","U2|One","Madonna|Vogue","Celine Dion|My Heart Will Go On","TLC|Waterfalls","2Pac|California Love","The Notorious B.I.G.|Juicy","Dr. Dre|Nuthin' but a 'G' Thang","Snoop Dogg|Gin and Juice","Alanis Morissette|You Oughta Know","Shania Twain|Man! I Feel Like a Woman!","The Smashing Pumpkins|1979","Beck|Loser","Blur|Song 2","No Doubt|Don't Speak","Weezer|Buddy Holly","Foo Fighters|Everlong","Ms. Lauryn Hill|Doo Wop (That Thing)","Cher|Believe","Ricky Martin|Livin' la Vida Loca","Sinéad O'Connor|Nothing Compares 2 U","Sir Mix-a-Lot|Baby Got Back","Hanson|MMMBop","Savage Garden|Truly Madly Deeply","Los Del Rio|Macarena - Bayside Boys Mix","Chumbawamba|Tubthumping","Deep Blue Something|Breakfast at Tiffany's","Marcy Playground|Sex and Candy","Semisonic|Closing Time","New Radicals|You Get What You Give","Lou Bega|Mambo No. 5 (A Little Bit of...)","Eiffel 65|Blue (Da Ba Dee)","4 Non Blondes|What's Up?","Natalie Imbruglia|Torn","OMC|How Bizarre"],
+    "2000s":["Beyoncé|Crazy in Love","OutKast|Hey Ya!","Eminem|Lose Yourself","50 Cent|In Da Club","Usher|Yeah!","Rihanna|Umbrella","Lady Gaga|Poker Face","Coldplay|Viva La Vida","The Killers|Mr. Brightside","Kanye West|Gold Digger","JAY-Z|99 Problems","Alicia Keys|Fallin'","Nelly|Hot in Herre","Justin Timberlake|SexyBack","Black Eyed Peas|I Gotta Feeling","Amy Winehouse|Rehab","Gnarls Barkley|Crazy","Kelly Clarkson|Since U Been Gone","Avril Lavigne|Complicated","Linkin Park|In the End","Green Day|Boulevard of Broken Dreams","Snow Patrol|Chasing Cars","The White Stripes|Seven Nation Army","Franz Ferdinand|Take Me Out","Maroon 5|This Love","Nickelback|How You Remind Me","Shakira|Hips Don't Lie","Britney Spears|Toxic","Christina Aguilera|Beautiful","OneRepublic|Apologize","Katy Perry|I Kissed a Girl","Flo Rida|Low","Gwen Stefani|Hollaback Girl","Fall Out Boy|Sugar, We're Goin Down","Kings of Leon|Sex on Fire","Daniel Powter|Bad Day","James Blunt|You're Beautiful","Natasha Bedingfield|Unwritten","Fountains of Wayne|Stacy's Mom","Vanessa Carlton|A Thousand Miles","Dido|White Flag","The Fray|How to Save a Life","Plain White T's|Hey There Delilah","Shaggy|It Wasn't Me","Soulja Boy|Crank That (Soulja Boy)"],
+    "2010s":["Adele|Rolling in the Deep","Ed Sheeran|Shape of You","Taylor Swift|Shake It Off","Mark Ronson|Uptown Funk","Rihanna|We Found Love","Katy Perry|Roar","Lady Gaga|Born This Way","Drake|One Dance","The Weeknd|Blinding Lights","Justin Bieber|Sorry","Maroon 5|Moves Like Jagger","Pharrell Williams|Happy","Daft Punk|Get Lucky","Lorde|Royals","Sia|Chandelier","Calvin Harris|Summer","Avicii|Wake Me Up","David Guetta|Titanium","Imagine Dragons|Radioactive","OneRepublic|Counting Stars","Macklemore & Ryan Lewis|Thrift Shop","Kendrick Lamar|HUMBLE.","Post Malone|rockstar","Billie Eilish|bad guy","Shawn Mendes|Stitches","Dua Lipa|New Rules","Camila Cabello|Havana","Luis Fonsi|Despacito","fun.|We Are Young","Carly Rae Jepsen|Call Me Maybe","PSY|Gangnam Style","Beyoncé|Formation","Sam Smith|Stay With Me","Hozier|Take Me to Church","Gotye|Somebody That I Used to Know","Baauer|Harlem Shake","OMI|Cheerleader","DNCE|Cake by the Ocean","Passenger|Let Her Go","Vance Joy|Riptide","MAGIC!|Rude","Iggy Azalea|Fancy","Lil Nas X|Old Town Road","Tones and I|Dance Monkey"],
+    "2020s":["The Weeknd|Save Your Tears","Dua Lipa|Levitating","Dua Lipa|Don't Start Now","Olivia Rodrigo|drivers license","Olivia Rodrigo|good 4 u","Harry Styles|As It Was","Harry Styles|Watermelon Sugar","Lil Nas X|MONTERO (Call Me By Your Name)","Lil Nas X|INDUSTRY BABY","Glass Animals|Heat Waves","BTS|Dynamite","Doja Cat|Say So","Adele|Easy On Me","Bad Bunny|Tití Me Preguntó","Miley Cyrus|Flowers","SZA|Kill Bill","Taylor Swift|Anti-Hero","Lizzo|About Damn Time","CKay|love nwantiti (ah ah ah)","Masked Wolf|Astronaut In The Ocean","GAYLE|abcdefu","Steve Lacy|Bad Habit","Sam Smith|Unholy","Elton John|Cold Heart - PNAU Remix"]
+  };
+  function splitSong(s){var i=s.indexOf('|');return {a:s.slice(0,i),t:s.slice(i+1)};}
+  function getCuratedCache(){try{return JSON.parse(localStorage.getItem(LS.curated)||'{}');}catch(e){return {};}}
+  function setCuratedCache(o){try{localStorage.setItem(LS.curated,JSON.stringify(o));}catch(e){}}
+  function loadCurated(decadeKey){
+    var list=[];
+    if(decadeKey==='all'){Object.keys(CURATED).forEach(function(k){list=list.concat(CURATED[k]);});}
+    else list=(CURATED[decadeKey]||[]).slice();
+    shuffle(list);list=list.slice(0,35);
+    var cache=getCuratedCache();var out=[];var todo=[];
+    list.forEach(function(str){var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);if(cache[key])out.push(cache[key]);else todo.push({s:s,key:key});});
+    return Promise.all(todo.map(function(item){
+      var q='track:"'+item.s.t+'" artist:"'+item.s.a+'"';
+      return api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q)).then(function(d){
+        var items=(d.tracks&&d.tracks.items)||[];var match=null;
+        for(var i=0;i<items.length;i++){var it=items[i];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(item.s.a))>=0||norm(item.s.a).indexOf(norm(a.name))>=0;})){match=it;break;}}
+        match=match||items[0]||null;
+        if(match){var mt=minTrack(match);cache[item.key]=mt;out.push(mt);}
+      }).catch(function(){});
+    })).then(function(){setCuratedCache(cache);return out;});
+  }
+
   function loadSource(){
     var type=$('sourceMode').value;
     if(type==='playlist'){var id=parsePlaylistId($('playlistUrl').value);if(!id)return Promise.reject(new Error('That doesn\u2019t look like a playlist link.'));S.lastPlaylistId=id;return loadPlaylist(id);}
@@ -512,6 +554,7 @@
     if(type==='decade')return loadDecade($('decadeSel').value);
     if(type==='genre'){var g=($('genreInput').value||'').trim();if(!g)return Promise.reject(new Error('Enter a genre.'));var gb=[0,0,10,20][Math.floor(Math.random()*4)];return loadSearchTracks('genre:"'+g+'"',gb).then(function(r){return (r&&r.length)?r:loadSearchTracks(g,0);});}
     if(type==='artist'){var a=($('artistInput').value||'').trim();if(!a)return Promise.reject(new Error('Enter an artist to drill.'));return loadSearchTracks('artist:"'+a+'"');}
+    if(type==='curated')return loadCurated($('curatedDecade').value);
     if(type==='misses')return loadMisses();
     return Promise.reject(new Error('Pick a source.'));
   }
@@ -520,6 +563,7 @@
     if(S.needReconnect)return 'New permissions needed \u2014 please Log out and reconnect, then try again.';
     if(type==='playlist'||type==='myplaylist')return 'No tracks. Spotify only shares tracks for playlists you own or collaborate on \u2014 try one of your own.';
     if(type==='misses')return 'No missed songs yet \u2014 play a round first, then come back to drill them.';
+    if(type==='curated')return 'Couldn\u2019t load the curated songs right now \u2014 please try again.';
     return 'No playable tracks found for that source.';
   }
 
@@ -954,7 +998,7 @@
   }
   function updateSourceUI(){
     var type=$('sourceMode')?$('sourceMode').value:'playlist';
-    ['playlist','myplaylist','top','decade','genre','artist','misses'].forEach(function(g){var el=$('src-'+g);if(el)el.style.display=(g===type)?'':'none';});
+    ['playlist','curated','myplaylist','top','decade','genre','artist','misses'].forEach(function(g){var el=$('src-'+g);if(el)el.style.display=(g===type)?'':'none';});
     if(type==='myplaylist')populateMyPlaylists();
     if(type==='misses'){var n=getMisses().length;$('missesInfo').textContent=n?('You have '+n+' missed song'+(n>1?'s':'')+' saved to drill.'):'No missed songs yet \u2014 play a round first, then come back.';}
   }

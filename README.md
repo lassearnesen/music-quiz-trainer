@@ -80,6 +80,10 @@ trailing `/`). The Connect screen displays the precise value to register.
   to drill. Pasted/your playlists must be ones you **own or collaborate on** (Feb 2026 dev‑mode rule — others
   return no tracks). Unplayable/local/podcast items are skipped. *(Decade rounds sample a few **random years**
   from the decade, each taken from the top of search, so the pool is fresh each round but still well‑known.)*
+- **Well-known hits by decade (curated):** a **hand‑picked, taste‑neutral** set of big songs and one‑hit
+  wonders per decade (80s → now). It's assembled from a built‑in list (not Spotify's rankings), and each
+  title is resolved to its Spotify track just so it can play. Pick a decade or "All," and it samples a fresh
+  ~35 each round (cached after first lookup). This is the best source for an unbiased, broad music quiz.
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
   them (answering one correctly retires it). Clear them any time.
 - **Fair wrong answers:** decoys come from the **same pool as the song** — other artists in the current
