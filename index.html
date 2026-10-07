@@ -201,8 +201,9 @@
         <button id="playBtn" class="iconbtn main" title="Play / Pause">⏸</button>
         <button id="skipBtn" class="iconbtn" title="I don't know">?</button>
       </div>
-      <p class="muted center" style="margin:0">Listen, then pick the artist / band.</p>
+      <p class="muted center" style="margin:0">Listen and guess the artist — then show the options to answer.</p>
     </div>
+    <button id="showOptionsBtn" class="btn secondary block">Show options</button>
     <div id="options" class="options"></div>
 
     <div id="feedback" class="card" style="display:none">
@@ -407,22 +408,25 @@
     }).catch(function(){var info={name:'',genres:[],image:'',url:''};S.artistInfo[id]=info;return info;});
   }
 
-  // Spotify exposes no "years active" field, so approximate it from the release history.
+  // Spotify exposes no "years active" field, so approximate it from the artist's release history.
   function ensureArtistSpan(id){
     if(S.artistSpan[id])return Promise.resolve(S.artistSpan[id]);
     var years=[],count=0,guard=0;
-    function page(u){
-      return api(u).then(function(d){
-        (d.items||[]).forEach(function(al){
-          count++;
-          var y=parseInt((((al&&al.release_date)||'')+'').slice(0,4),10);
-          if(y)years.push(y);
-        });
-        guard++;
-        if(d.next&&guard<5)return page(d.next);
+    function collect(d){
+      (d.items||[]).forEach(function(al){
+        count++;
+        var y=parseInt((((al&&al.release_date)||'')+'').slice(0,4),10);
+        if(y)years.push(y);
       });
     }
-    return page('/artists/'+id+'/albums?include_groups=album,single&limit=50').then(function(){
+    function fetchGroups(groups){
+      years=[];count=0;guard=0;
+      function page(u){return api(u).then(function(d){collect(d);guard++;if(d.next&&guard<5)return page(d.next);});}
+      return page('/artists/'+id+'/albums?include_groups='+groups+'&limit=50');
+    }
+    return fetchGroups('album,single,compilation').then(function(){
+      if(!years.length)return fetchGroups('appears_on');
+    }).then(function(){
       var span={count:count,first:years.length?Math.min.apply(null,years):null,last:years.length?Math.max.apply(null,years):null};
       S.artistSpan[id]=span;return span;
     }).catch(function(){var span={count:0,first:null,last:null};S.artistSpan[id]=span;return span;});
@@ -613,20 +617,27 @@
   function renderQuizLoading(){
     updateStats();
     clearFeedback();
-    $('options').innerHTML='<p class="muted" style="grid-column:1/-1">Preparing options\u2026</p>';
+    $('options').innerHTML='';$('options').style.display='none';
+    $('showOptionsBtn').style.display='none';
   }
 
   function renderQuiz(){
     updateStats();
     clearFeedback();
-    var box=$('options');box.innerHTML='';
+    var box=$('options');box.innerHTML='';box.style.display='none';
     S.current.options.forEach(function(opt){
       var b=document.createElement('button');
       b.className='opt';b.textContent=opt.name;
       b.onclick=function(){answer(opt,b);};
       box.appendChild(b);
     });
+    var sb=$('showOptionsBtn');sb.style.display='';sb.disabled=false;
     updatePlayBtn();
+  }
+
+  function showOptions(){
+    $('options').style.display='';
+    $('showOptionsBtn').style.display='none';
   }
 
   function answer(opt,btn){
@@ -686,7 +697,7 @@
   }
 
   function activeLine(span){
-    if(!span||!span.first)return 'Active period: not published in Spotify\u2019s API.';
+    if(!span||!span.first)return '';
     var period=(span.first===span.last)?(''+span.first):(span.first+'\u2013'+span.last);
     return 'Active on Spotify: '+period+(span.count?(' \u00b7 '+span.count+' release'+(span.count>1?'s':'')):'');
   }
@@ -757,6 +768,7 @@
     $('playBtn').onclick=togglePlay;
     $('replayBtn').onclick=replay;
     $('skipBtn').onclick=skip;
+    $('showOptionsBtn').onclick=showOptions;
     $('nextBtn').onclick=advance;
     $('stopBtn').onclick=stopSession;
     $('againBtn').onclick=function(){

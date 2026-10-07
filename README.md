@@ -71,6 +71,8 @@ trailing `/`). The Connect screen displays the precise value to register.
 
 - **Continuous trainer:** questions keep coming — pick **Shuffle** or **In playlist order** at the start,
   answer as many as you want, and press **Stop** any time for a summary (answered, accuracy, best streak).
+- **Recall first:** the four choices stay hidden until you press **Show options**, so you try to name the
+  artist from memory before revealing the multiple-choice answers.
 - **Songs** come from the playlist link you paste — **it must be a playlist you own or collaborate on**.
   Since Spotify's February 2026 dev-mode changes, the API only returns track lists for your own/collaborative
   playlists; others return just metadata. Unplayable/local/podcast items are skipped.
@@ -82,8 +84,8 @@ trailing `/`). The Connect screen displays the precise value to register.
   duration, explicit flag, and featured artists.
 - **About the artist** panel: after you answer, it shows the artist's photo, genres, and a link to their
   Spotify profile, plus an **approximate active period**. Spotify's API has no official "years active" or
-  biography field, so the active period is derived from the span of their releases on Spotify (earliest to
-  latest release year, via `GET /artists/{id}/albums`).
+  biography field, so the active period is taken from the span of their releases on Spotify — oldest to
+  newest release year across albums, singles and compilations (via `GET /artists/{id}/albums`).
 
 ## Privacy
 
