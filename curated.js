@@ -77,3 +77,29 @@ window.MQT_CURATED = {
 "Bad Bunny|Tití Me Preguntó","Bad Bunny|Me Porto Bonito","Bad Bunny|Dakiti","Bad Bunny|Yonaguni","Karol G|Bichota","Karol G|Tusa","Rosalía|Despechá","Bizarrap|Shakira: Bzrp Music Sessions, Vol. 53","BTS|Dynamite","BTS|Butter","BTS|Permission to Dance","BLACKPINK|How You Like That","BLACKPINK|Pink Venom","BLACKPINK|Kill This Love"
 ]
 };
+
+/* --- ~10% Norwegian artists/songs, spread across decades & genres (pop, electronic, indie, hip-hop, black metal, Eurovision) --- */
+(function(C){
+  if(!C) return;
+  var NO={
+"1980s":[
+"a-ha|Hunting High and Low","a-ha|Stay on These Roads","a-ha|Cry Wolf","a-ha|Manhattan Skyline","a-ha|The Living Daylights","Bobbysocks|La Det Swinge","TNT|Intuition","Stage Dolls|Love Cries","DumDum Boys|Splitter pine","deLillos|Neste sommer","Raga Rockers|Noen å hate","Dance With a Stranger|Invitation","Åge Aleksandersen|Lys og varme","Jahn Teigen|Optimist"
+],
+"1990s":[
+"a-ha|Crying in the Rain","Secret Garden|Nocturne","Lene Marlin|Sitting Down Here","Lene Marlin|Unforgivable Sinner","Lene Marlin|Playing My Game","Madrugada|Majesty","D'Sound|Tossing and Turning","DDE|Det går likar no","Postgirobygget|Mombasa","CC Cowboys|Harry","Seigmen|Hjernen er alene","Jokke & Valentinerne|Alt kan repareres","Morten Abel|Hula Hoop","Return|Pump It Up","DumDum Boys|Enden av regnbuen","September When|Satellite","Vamp|Tir Na Noir","Bel Canto|Unicorn",
+"Mayhem|Freezing Moon","Darkthrone|Transilvanian Hunger","Emperor|I Am the Black Wizards","Satyricon|Mother North"
+],
+"2000s":[
+"Röyksopp|Eple","Röyksopp|Poor Leno","Röyksopp|Remind Me","Röyksopp|What Else Is There?","Kings of Convenience|Toxic Girl","Kings of Convenience|I'd Rather Dance with You","Kings of Convenience|Misread","M2M|Don't Say You Love Me","M2M|Mirror Mirror","M2M|The Day You Went Away","Kurt Nilsen|She's So High","Annie|Heartbeat","Annie|Chewing Gum","Madcon|Beggin'","Marit Larsen|If a Song Could Get Me You","Marion Raven|Here I Am","Alexander Rybak|Fairytale","Datarock|Fa-Fa-Fa","Sondre Lerche|Two Way Monologue","Wig Wam|In My Dreams","Ida Maria|I Like You So Much Better When You're Naked","Donkeyboy|Ambitions","Donkeyboy|Sometimes","Karpe Diem|Vestkantsvartinga","Thomas Dybdahl|From Grace","Ane Brun|To Let Myself Go","Bertine Zetlitz|Girl Like You","Lene Marlin|How Would It Be",
+"Dimmu Borgir|Progenies of the Great Apocalypse","Satyricon|K.I.N.G.","Enslaved|Isa"
+],
+"2010s":[
+"Kygo|Firestone","Kygo|Stole the Show","Kygo|It Ain't Me","Kygo|Happy Now","Kygo|Higher Love","Kygo|Carry Me","Alan Walker|Faded","Alan Walker|Alone","Alan Walker|Sing Me to Sleep","Alan Walker|Darkside","Alan Walker|On My Way","Alan Walker|Diamond Heart","Nico & Vinz|Am I Wrong","Nico & Vinz|That's How You Know","Sigrid|Don't Kill My Vibe","Sigrid|Strangers","Sigrid|High Five","Sigrid|Sucker Punch","Aurora|Runaway","Aurora|Running with the Wolves","Aurora|Queendom","Astrid S|Hurts So Good","Astrid S|Think Before I Talk","Astrid S|Breathe","Highasakite|Since Last Wednesday","Highasakite|Lover, Where Do You Live?","Cashmere Cat|Mirror Maru","Matoma|Old Thing Back","Matoma|False Alarm","Seeb|Breathe","Anna of the North|Lovers","Boy Pablo|Everytime","Dagny|Backbeat","Dagny|Wearing Nothing","Susanne Sundfør|White Foxes","Karpe|Hvite menn som pusher 50","OnklP & De Fjerne Slektningene|Styggen på ryggen","Cezinando|Håper du har plass","Gabrielle|Ring meg","Sondre Justad|Riv i hjertet","Emilie Nicolas|Pstereo","Margaret Berger|I Feed You My Love","CLMD|The Stockholm Syndrome","Lemaitre|Closer","Broiler|Dancing Shoes",
+"Kvelertak|Bruane Brenn","Leprous|The Price"
+],
+"2020s":[
+"girl in red|we fell in love in october","girl in red|Serotonin","girl in red|i wanna be your girlfriend","Aurora|Cure for Me","Aurora|The Seed","Sigrid|Mirror","Sigrid|It Gets Dark","Kygo|Lose Somebody","KEiiNO|Spirit in the Sky","TIX|Fallen Angel","Subwoolfer|Give That Wolf a Banana","Gåte|Ulveham","Marcus & Martinus|Unforgettable","Sondre Justad|Tilgivelse","Alan Walker|Fake a Smile","Hkeem|Fy Faen","Emma Steinbakken|Not Gonna Cry","Dagny|Somebody","Boy Pablo|Hey Girl","girl in red|bad idea!"
+]
+  };
+  Object.keys(NO).forEach(function(k){C[k]=(C[k]||[]).concat(NO[k]);});
+})(window.MQT_CURATED);

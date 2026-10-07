@@ -81,14 +81,16 @@ trailing `/`). The Connect screen displays the precise value to register.
   to drill. Pasted/your playlists must be ones you **own or collaborate on** (Feb 2026 dev‑mode rule — others
   return no tracks). Unplayable/local/podcast items are skipped. *(Decade rounds sample a few **random years**
   from the decade, each taken from the top of search, so the pool is fresh each round but still well‑known.)*
-- **Well-known hits by decade (curated):** a **hand‑picked, taste‑neutral** set of ~**1,300 big songs and
-  one‑hit wonders** spanning every major genre per decade (80s → now). It's assembled from a built‑in list
-  (not Spotify's rankings), and each title is resolved to its Spotify track just so it can play. Pick a decade
-  or "All," and it samples a fresh ~35 each round (cached after first lookup). This is the best source for an
-  unbiased, broad music quiz. You can also hit **"Create / update a Spotify playlist from this list"** to save
-  the whole decade (or all of them) as a **private playlist in your own Spotify account** — re‑running updates
-  the same playlist instead of making duplicates. *(This needs the `playlist-modify-private` permission, so
-  log out and reconnect once to grant it.)*
+- **Well-known hits by decade (curated):** a **hand‑picked, taste‑neutral** set of ~**1,460 big songs and
+  one‑hit wonders** spanning every major genre per decade (80s → now), **including ~130 Norwegian artists**
+  (a‑ha, Röyksopp, Kygo, Alan Walker, Sigrid, Aurora, Karpe, deLillos, DDE, black‑metal, Eurovision winners…).
+  It's assembled from a built‑in list (not Spotify's rankings), and each title is resolved to its Spotify track
+  just so it can play. Pick a decade or "All," and it samples a fresh ~35 each round (cached after first lookup).
+  This is the best source for an unbiased, broad music quiz. You can also hit **"Create / update a Spotify
+  playlist from this list"** to save the whole decade (or all of them) as a **private playlist in your own
+  Spotify account** — the playlist is created up front and **fills in live** (open it in Spotify to watch songs
+  appear), and re‑running only adds anything missing instead of duplicating. *(This needs the
+  `playlist-modify-private` permission, so log out and reconnect once to grant it.)*
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
   them (answering one correctly retires it). Clear them any time.
 - **Fair wrong answers:** decoys come from the **same pool as the song** — other artists in the current
