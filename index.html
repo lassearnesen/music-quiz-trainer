@@ -151,16 +151,17 @@
       <span class="pill"><span id="userDot" class="dot ok"></span><span id="userName">Connected</span></span>
       <button id="logoutBtn" class="btn ghost">Log out</button>
     </div>
-    <h2>Start a round</h2>
+    <h2>Start training</h2>
     <div class="card">
       <label for="playlistUrl">Playlist link</label>
       <input id="playlistUrl" type="text" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" spellcheck="false">
       <div class="spacer"></div>
       <div class="row">
         <div>
-          <label for="numQuestions">Questions</label>
-          <select id="numQuestions">
-            <option>5</option><option selected>10</option><option>15</option><option>20</option>
+          <label for="orderMode">Playback order</label>
+          <select id="orderMode">
+            <option value="shuffle" selected>Shuffle</option>
+            <option value="order">In playlist order</option>
           </select>
         </div>
         <div>
@@ -177,11 +178,11 @@
     </div>
   </section>
 
-  <!-- ============ QUIZ ============ -->
+  <!-- ============ QUIZ (continuous) ============ -->
   <section id="screen-quiz" class="screen">
     <div class="progress">
-      <span id="qProgress">Question 1 / 10</span>
-      <span class="score" id="qScore">Score 0 · Streak 0</span>
+      <span class="score" id="qStats">Answered 0 · Correct 0 · Streak 0</span>
+      <button id="stopBtn" class="btn ghost">Stop ■</button>
     </div>
     <div class="card player">
       <div class="cover-hidden">Who is this?</div>
@@ -194,12 +195,9 @@
       <p class="muted center" style="margin:0">Listen, then pick the artist / band.</p>
     </div>
     <div id="options" class="options"></div>
-  </section>
 
-  <!-- ============ FEEDBACK ============ -->
-  <section id="screen-feedback" class="screen">
-    <div id="fbBanner" class="banner"></div>
-    <div class="card">
+    <div id="feedback" class="card" style="display:none">
+      <div id="fbBanner" class="banner"></div>
       <div class="reveal">
         <img id="fbCover" alt="Album cover" src="">
         <div>
@@ -208,20 +206,20 @@
         </div>
       </div>
       <ul id="fbTrivia" class="trivia"></ul>
+      <button id="nextBtn" class="btn block">Next song ▶</button>
     </div>
-    <button id="nextBtn" class="btn block">Next</button>
   </section>
 
   <!-- ============ RESULTS ============ -->
   <section id="screen-results" class="screen">
-    <h2 class="center">Round complete 🎉</h2>
+    <h2 class="center">Session summary</h2>
     <div class="card">
       <div class="stats">
         <div class="stat"><b id="rScore">0</b><span>Correct</span></div>
         <div class="stat"><b id="rAcc">0%</b><span>Accuracy</span></div>
         <div class="stat"><b id="rStreak">0</b><span>Best streak</span></div>
       </div>
-      <button id="againBtn" class="btn block">Play again (same playlist)</button>
+      <button id="againBtn" class="btn block">Start again (same playlist)</button>
       <div class="spacer"></div>
       <button id="newListBtn" class="btn secondary block">New playlist</button>
     </div>
@@ -247,8 +245,8 @@
   var S={
     user:null, player:null, deviceId:null, token:null, isPlaying:false,
     tracks:[], artistInfo:{}, artistPool:[], genreCache:{},
-    quiz:{questions:[],i:0,score:0,streak:0,best:0,random:false,num:10},
-    current:null, lastPlaylistId:null
+    sess:{answered:0,correct:0,streak:0,best:0,order:'shuffle',random:false},
+    queue:[], qpos:0, current:null, lastPlaylistId:null
   };
 
   // ---------- tiny helpers ----------
@@ -517,8 +515,8 @@
     var raw=$('playlistUrl').value;
     var id=parsePlaylistId(raw);
     if(!id){toast('That doesn\u2019t look like a playlist link.');return;}
-    S.quiz.num=parseInt($('numQuestions').value,10)||10;
-    S.quiz.random=$('startMode').value==='1';
+    S.sess.order=$('orderMode').value==='order'?'order':'shuffle';
+    S.sess.random=$('startMode').value==='1';
     var status=$('setupStatus');
     $('startBtn').disabled=true;status.textContent='Loading playlist\u2026';
     S.lastPlaylistId=id;S.tracks=[];S.artistInfo={};S.artistPool=[];S.genreCache={};
@@ -531,8 +529,8 @@
       status.textContent='Starting player\u2026 (allow a moment)';
       return ensurePlayer();
     }).then(function(){
-      S.quiz.i=0;S.quiz.score=0;S.quiz.streak=0;S.quiz.best=0;
-      S.quiz.questions=shuffle(S.tracks.slice()).slice(0,Math.min(S.quiz.num,S.tracks.length));
+      S.sess.answered=0;S.sess.correct=0;S.sess.streak=0;S.sess.best=0;
+      buildQueue();
       status.textContent='';$('startBtn').disabled=false;
       return nextQuestion();
     }).catch(function(e){
@@ -541,30 +539,57 @@
     });
   }
 
+  function buildQueue(){
+    var idx=[];for(var i=0;i<S.tracks.length;i++)idx.push(i);
+    if(S.sess.order==='shuffle')shuffle(idx);
+    S.queue=idx;S.qpos=0;
+  }
+
+  function nextTrack(){
+    if(!S.queue.length)return null;
+    if(S.qpos>=S.queue.length){if(S.sess.order==='shuffle')shuffle(S.queue);S.qpos=0;}
+    var t=S.tracks[S.queue[S.qpos]];S.qpos++;return t;
+  }
+
   function nextQuestion(){
-    var q=S.quiz.questions[S.quiz.i];
+    var q=nextTrack();
+    if(!q){toast('No tracks to play.');return Promise.resolve();}
     screen('screen-quiz');
     renderQuizLoading();
     return pickDistractors(q).then(function(distractors){
       var correct={id:q.artists[0].id,name:q.artists[0].name};
       var options=shuffle([correct].concat(distractors));
       var pos=0;
-      if(S.quiz.random){var max=Math.max(0,(q.duration_ms||30000)-20000);pos=Math.floor(Math.random()*max);}
+      if(S.sess.random){var max=Math.max(0,(q.duration_ms||30000)-20000);pos=Math.floor(Math.random()*max);}
       S.current={track:q,correct:correct,options:options,pos:pos,revealed:false,answered:false};
       renderQuiz();
       return playTrack(q.uri,pos);
     });
   }
 
+  function statsText(){
+    var a=S.sess.answered,c=S.sess.correct;
+    var acc=a?Math.round(100*c/a):0;
+    return 'Answered '+a+' · Correct '+c+' ('+acc+'%) · Streak '+S.sess.streak;
+  }
+  function updateStats(){$('qStats').textContent=statsText();}
+
+  function clearFeedback(){
+    $('feedback').style.display='none';
+    $('fbBanner').textContent='';$('fbBanner').className='banner';
+    $('fbTrack').textContent='';$('fbArtist').textContent='';$('fbTrivia').innerHTML='';
+    $('fbCover').removeAttribute('src');$('fbCover').style.visibility='hidden';
+  }
+
   function renderQuizLoading(){
-    $('qProgress').textContent='Question '+(S.quiz.i+1)+' / '+S.quiz.questions.length;
-    $('qScore').textContent='Score '+S.quiz.score+' · Streak '+S.quiz.streak;
+    updateStats();
+    clearFeedback();
     $('options').innerHTML='<p class="muted" style="grid-column:1/-1">Preparing options\u2026</p>';
   }
 
   function renderQuiz(){
-    $('qProgress').textContent='Question '+(S.quiz.i+1)+' / '+S.quiz.questions.length;
-    $('qScore').textContent='Score '+S.quiz.score+' · Streak '+S.quiz.streak;
+    updateStats();
+    clearFeedback();
     var box=$('options');box.innerHTML='';
     S.current.options.forEach(function(opt){
       var b=document.createElement('button');
@@ -581,17 +606,17 @@
     var correct=S.current.correct;
     var right=opt&&opt.id===correct.id;
     S.current.isRight=right;
-    if(right){S.quiz.score++;S.quiz.streak++;S.quiz.best=Math.max(S.quiz.best,S.quiz.streak);}
-    else{S.quiz.streak=0;}
-    // mark buttons
+    S.sess.answered++;
+    if(right){S.sess.correct++;S.sess.streak++;S.sess.best=Math.max(S.sess.best,S.sess.streak);}
+    else{S.sess.streak=0;}
     var btns=$('options').querySelectorAll('.opt');
     btns.forEach(function(b){
       b.disabled=true;
       if(b.textContent===correct.name)b.classList.add('correct');
       else if(btn&&b===btn)b.classList.add('wrong');
     });
-    if(S.player)S.player.pause().catch(function(){});
-    setTimeout(showFeedback,650);
+    updateStats();
+    showFeedback();
   }
 
   function skip(){
@@ -629,24 +654,19 @@
     $('fbArtist').textContent='by '+t.artists.map(function(a){return a.name;}).join(', ');
     var ul=$('fbTrivia');ul.innerHTML='';
     buildTrivia(t).forEach(function(line){var li=document.createElement('li');li.textContent=line;ul.appendChild(li);});
-    var last=S.quiz.i>=S.quiz.questions.length-1;
-    $('nextBtn').textContent=last?'See results':'Next';
-    // reveal actual media metadata now (no longer a spoiler)
     if('mediaSession' in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:t.artists.map(function(a){return a.name;}).join(', '),album:(t.album&&t.album.name)||'',artwork:img?[{src:img,sizes:'300x300',type:'image/jpeg'}]:[]});}catch(e){}}
-    screen('screen-feedback');
+    var fb=$('feedback');fb.style.display='block';
+    if(fb.scrollIntoView)fb.scrollIntoView({behavior:'smooth',block:'nearest'});
   }
 
-  function advance(){
-    if(S.quiz.i>=S.quiz.questions.length-1){showResults();return;}
-    S.quiz.i++;nextQuestion();
-  }
+  function advance(){nextQuestion();}
 
-  function showResults(){
+  function stopSession(){
     if(S.player)S.player.pause().catch(function(){});
-    var total=S.quiz.questions.length;
-    $('rScore').textContent=S.quiz.score+' / '+total;
-    $('rAcc').textContent=(total?Math.round(100*S.quiz.score/total):0)+'%';
-    $('rStreak').textContent=S.quiz.best;
+    var a=S.sess.answered,c=S.sess.correct;
+    $('rScore').textContent=c+' / '+a;
+    $('rAcc').textContent=(a?Math.round(100*c/a):0)+'%';
+    $('rStreak').textContent=S.sess.best;
     screen('screen-results');
   }
 
@@ -695,10 +715,11 @@
     $('replayBtn').onclick=replay;
     $('skipBtn').onclick=skip;
     $('nextBtn').onclick=advance;
+    $('stopBtn').onclick=stopSession;
     $('againBtn').onclick=function(){
       if(!S.tracks.length){showSetup();return;}
-      S.quiz.i=0;S.quiz.score=0;S.quiz.streak=0;S.quiz.best=0;
-      S.quiz.questions=shuffle(S.tracks.slice()).slice(0,Math.min(S.quiz.num,S.tracks.length));
+      S.sess.answered=0;S.sess.correct=0;S.sess.streak=0;S.sess.best=0;
+      buildQueue();
       nextQuestion();
     };
     $('newListBtn').onclick=showSetup;

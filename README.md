@@ -57,9 +57,10 @@ trailing `/`). The Connect screen displays the precise value to register.
 
 1. Open your hosted URL.
 2. Paste your **Client ID**, confirm the redirect URI is registered, and click **Connect Spotify**.
-3. Paste a **playlist link** (e.g. `https://open.spotify.com/playlist/...`), choose the number of questions,
-   and start.
-4. Listen, pick the artist, then read the reveal + trivia. 🎵
+3. Paste a **playlist link** (e.g. `https://open.spotify.com/playlist/...`), choose **Shuffle** or
+   **In playlist order**, and start.
+4. Answer song after song — you get instant feedback + trivia the moment you pick. Keep going as long as you
+   like, then press **Stop** for a session summary. 🎵
 
 > Tip: keep the Spotify desktop/mobile app **closed** while playing so it doesn't spoil the answer on another
 > device. Playback happens on an in-browser device named "Music Quiz Trainer".
@@ -68,7 +69,9 @@ trailing `/`). The Connect screen displays the precise value to register.
 
 ## How the quiz works
 
-- **Songs** come from the playlist link you paste each round. Unplayable/local/podcast items are skipped.
+- **Continuous trainer:** questions keep coming — pick **Shuffle** or **In playlist order** at the start,
+  answer as many as you want, and press **Stop** any time for a summary (answered, accuracy, best streak).
+- **Songs** come from the playlist link you paste. Unplayable/local/podcast items are skipped.
 - **Wrong answers are "smart":** the app prefers decoys that share a **genre** and sit in a similar
   **popularity** band as the real artist. If the playlist doesn't have enough similar acts, it pulls more
   via Spotify's artist **genre search**. (Spotify's dedicated *related-artists* endpoint was deprecated for
