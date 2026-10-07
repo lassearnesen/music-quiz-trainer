@@ -585,6 +585,13 @@
     function page(u){return api(u).then(function(d){(d.items||[]).forEach(function(it){var t=it.item;if(t&&t.uri){uris[t.uri]=1;var an=(t.artists&&t.artists[0]&&t.artists[0].name)||'';if(t.name&&an)keys[norm(an)+'|'+norm(t.name)]=1;}});guard++;if(d.next&&guard<30)return page(d.next);});}
     return page('/playlists/'+pid+'/items?limit=100&fields='+encodeURIComponent('next,items(item(uri,name,artists(name)))')).then(function(){return {uris:uris,keys:keys};}).catch(function(){return {uris:uris,keys:keys};});
   }
+  var _addEp=null;
+  function addTracks(pid,uris){
+    var body=JSON.stringify({uris:uris});
+    function post(ep){return api('/playlists/'+pid+'/'+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:body}).then(function(r){_addEp=ep;return r;});}
+    if(_addEp)return post(_addEp);
+    return post('tracks').catch(function(){return post('items');});
+  }
   function createCuratedPlaylist(decadeKey){
     var list=curatedSongs(decadeKey);
     if(!list.length)return;
@@ -592,11 +599,12 @@
     lk.style.display='none';btn.disabled=true;
     var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
     st.textContent='Creating the playlist in Spotify\u2026';
-    var PL=null;var seen={};var buffer=[];var added=0;var flushing=Promise.resolve();
+    var PL=null;var seen={};var buffer=[];var added=0;var flushing=Promise.resolve();var addErr=null;
     function flush(force){
+      if(addErr)return flushing;
       if(buffer.length>=5||(force&&buffer.length)){
         var batch=buffer.splice(0,100);
-        flushing=flushing.then(function(){return api('/playlists/'+PL.id+'/items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uris:batch})}).then(function(){added+=batch.length;});});
+        flushing=flushing.then(function(){if(addErr)return;return addTracks(PL.id,batch).then(function(){added+=batch.length;},function(e){if(!addErr){addErr=e;flagReconnect(e);}});});
       }
       return flushing;
     }
@@ -610,6 +618,7 @@
       seen=existing.uris||{};var knownKeys=existing.keys||{};
       var have=Object.keys(seen).length;
       return resolveCurated(list,function(done,total,rl){
+        if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission.':'');return;}
         var base=(have>0?('Resuming \u2014 '+have+' already in playlist \u00b7 '):'');
         var fail=(rl&&rl.failed?(' \u00b7 '+rl.failed+' not found yet'):'');
         if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent=base+'Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' new added, '+done+'/'+total+' checked)'+fail;}
@@ -617,6 +626,7 @@
       },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}},knownKeys).then(function(){return flush(true);});
     }).then(function(){return flushing;}).then(function(){
       btn.disabled=false;
+      if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission, then retry.':' \u2014 please try again.');return;}
       st.textContent=(added>0?('Done \u2014 added '+added+' songs to your private playlist \u201c'+name+'\u201d (Your Library).'):('Your playlist \u201c'+name+'\u201d is already up to date in Your Library.'));
     }).catch(function(e){btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not build the playlist.');});
   }
