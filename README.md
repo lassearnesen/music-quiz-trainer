@@ -7,6 +7,10 @@ pulled from Spotify's metadata.
 Everything lives in one portable file: **`index.html`**. It uses *only* the Spotify Web API and the
 Spotify Web Playback SDK.
 
+> **▶ Live site:** <https://lassearnesen.github.io/music-quiz-trainer/>
+> **🔑 Spotify Redirect URI to register (exact, keep the trailing slash):**
+> `https://lassearnesen.github.io/music-quiz-trainer/`
+
 ---
 
 ## What you need
