@@ -599,10 +599,17 @@
     }).then(function(r){
       btn.disabled=false;
       var missing=list.length-r.saved;
-      st.textContent=(missing>5?('Saved '+r.count+' tracks so far \u2014 ~'+missing+' still pending (Spotify rate limit). Click the button again to add the rest; it resumes where it left off.'):('Done \u2014 '+r.count+' tracks saved to your Spotify.'));
+      var plName=(r.pl&&r.pl.name)||'Music Quiz \u2014 Well-Known Hits';
+      st.textContent=(missing>5?('Saved '+r.count+' tracks so far \u2014 ~'+missing+' still pending (Spotify rate limit). Click the button again to add the rest; it resumes where it left off.'):('Done \u2014 '+r.count+' tracks saved. Look for the private playlist \u201c'+plName+'\u201d in Your Library (open the link below).'));
       var url=(r.pl.external_urls&&r.pl.external_urls.spotify)||('https://open.spotify.com/playlist/'+r.pl.id);
       lk.href=url;lk.textContent='Open your playlist in Spotify \u2197';lk.style.display='';
     }).catch(function(e){btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not create the playlist.');});
+  }
+  function showSavedCuratedPlaylist(){
+    var lk=$('curatedLink');if(!lk)return;
+    var store=getPlStore();var decade=$('curatedDecade')?$('curatedDecade').value:'all';var pid=store[decade];
+    if(pid){lk.href='https://open.spotify.com/playlist/'+pid;lk.textContent='Open your saved playlist in Spotify \u2197';lk.style.display='';}
+    else{lk.style.display='none';lk.removeAttribute('href');}
   }
 
   function loadSource(){
@@ -1061,6 +1068,7 @@
     var type=$('sourceMode')?$('sourceMode').value:'playlist';
     ['playlist','curated','myplaylist','top','decade','genre','artist','misses'].forEach(function(g){var el=$('src-'+g);if(el)el.style.display=(g===type)?'':'none';});
     if(type==='myplaylist')populateMyPlaylists();
+    if(type==='curated')showSavedCuratedPlaylist();
     if(type==='misses'){var n=getMisses().length;$('missesInfo').textContent=n?('You have '+n+' missed song'+(n>1?'s':'')+' saved to drill.'):'No missed songs yet \u2014 play a round first, then come back.';}
   }
   function showSetup(){
@@ -1092,6 +1100,7 @@
     $('sourceMode').onchange=updateSourceUI;
     $('clearMissesBtn').onclick=function(){setMisses([]);updateSourceUI();toast('Misses cleared.');};
     $('curatedBuildBtn').onclick=function(){createCuratedPlaylist($('curatedDecade').value);};
+    $('curatedDecade').onchange=showSavedCuratedPlaylist;
     $('playBtn').onclick=togglePlay;
     $('replayBtn').onclick=replay;
     $('skipBtn').onclick=skip;
