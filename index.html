@@ -589,7 +589,7 @@
     st.textContent='Creating the playlist in Spotify\u2026';
     var PL=null;var seen={};var buffer=[];var added=0;var flushing=Promise.resolve();
     function flush(force){
-      if(buffer.length>=100||(force&&buffer.length)){
+      if(buffer.length>=10||(force&&buffer.length)){
         var batch=buffer.splice(0,100);
         flushing=flushing.then(function(){return api('/playlists/'+PL.id+'/items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uris:batch})}).then(function(){added+=batch.length;});});
       }
@@ -603,9 +603,11 @@
       return getPlaylistUris(pl.id);
     }).then(function(existing){
       seen=existing||{};
+      var have=Object.keys(seen).length;
       return resolveCurated(list,function(done,total,rl){
-        if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent='Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' added, '+done+'/'+total+' checked)';}
-        else st.textContent='Finding & adding songs\u2026 '+added+' added, '+done+' / '+total+' checked';
+        var base=(have>0?('Resuming \u2014 '+have+' already saved \u00b7 '):'');
+        if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent=base+'Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' added, '+done+'/'+total+' checked)';}
+        else st.textContent=base+'Finding & adding songs\u2026 '+added+' added, '+done+' / '+total+' checked';
       },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}}).then(function(){return flush(true);});
     }).then(function(){return flushing;}).then(function(){
       btn.disabled=false;
