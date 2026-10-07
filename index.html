@@ -193,6 +193,10 @@
           <option value="2020s">2020s</option>
         </select>
         <p class="muted" style="margin:6px 0 0;font-size:13px">A hand‑picked mix of major artists and one‑hit wonders — <b>not</b> based on your listening.</p>
+        <div class="spacer"></div>
+        <button id="curatedBuildBtn" class="btn secondary block" type="button">Create / update a Spotify playlist from this list</button>
+        <p id="curatedStatus" class="muted" style="margin:8px 0 0;font-size:13px"></p>
+        <a id="curatedLink" class="ai-link" target="_blank" rel="noopener" style="display:none"></a>
       </div>
       <div id="src-myplaylist" class="src-group" style="display:none">
         <label for="myPlaylistSel">Your playlists</label>
@@ -318,6 +322,7 @@
 </div>
 <div id="toast"></div>
 
+<script src="curated.js"></script>
 <script>
 (function(){
   "use strict";
@@ -328,8 +333,8 @@
   var SCOPES=['streaming','user-read-email','user-read-private',
     'user-read-playback-state','user-modify-playback-state',
     'playlist-read-private','playlist-read-collaborative',
-    'user-top-read','user-follow-read','user-library-read','user-read-recently-played'];
-  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st',misses:'mqt_misses',curated:'mqt_curated'};
+    'user-top-read','user-follow-read','user-library-read','user-read-recently-played','playlist-modify-private'];
+  var LS={cid:'mqt_cid',access:'mqt_access',refresh:'mqt_refresh',exp:'mqt_exp',ver:'mqt_ver',st:'mqt_st',misses:'mqt_misses',curated:'mqt_curated',curatedPl:'mqt_curatedpl'};
 
   // ---------- state ----------
   var S={
@@ -526,22 +531,71 @@
   function splitSong(s){var i=s.indexOf('|');return {a:s.slice(0,i),t:s.slice(i+1)};}
   function getCuratedCache(){try{return JSON.parse(localStorage.getItem(LS.curated)||'{}');}catch(e){return {};}}
   function setCuratedCache(o){try{localStorage.setItem(LS.curated,JSON.stringify(o));}catch(e){}}
+  function CUR(){return (window.MQT_CURATED||CURATED);}
+  function curatedSongs(decadeKey){var c=CUR();var list=[];if(decadeKey==='all'){Object.keys(c).forEach(function(k){list=list.concat(c[k]);});}else list=(c[decadeKey]||[]).slice();return list;}
+
+  // Resolve "Artist|Title" strings to Spotify tracks (cached). onDone(done,total) reports progress.
+  function resolveCurated(list,onDone,wantUris){
+    var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;var total=list.length;
+    function worker(){
+      if(i>=list.length)return Promise.resolve();
+      var str=list[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
+      var p;
+      if(cache[key]){out.push(cache[key]);if(cache[key].uri)uris.push(cache[key].uri);p=Promise.resolve();}
+      else{
+        var q='track:"'+s.t+'" artist:"'+s.a+'"';
+        p=api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q)).then(function(d){
+          var items=(d.tracks&&d.tracks.items)||[];var m=null;
+          for(var j=0;j<items.length;j++){var it=items[j];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(s.a))>=0||norm(s.a).indexOf(norm(a.name))>=0;})){m=it;break;}}
+          m=m||items[0]||null;
+          if(m){var mt=minTrack(m);cache[key]=mt;out.push(mt);if(mt.uri)uris.push(mt.uri);}
+        }).catch(function(){});
+      }
+      return p.then(function(){done++;if(onDone)onDone(done,total);return worker();});
+    }
+    var conc=wantUris?5:8;var ws=[];for(var w=0;w<conc;w++)ws.push(worker());
+    return Promise.all(ws).then(function(){setCuratedCache(cache);
+      if(wantUris){var seen={},u=[];uris.forEach(function(x){if(x&&!seen[x]){seen[x]=1;u.push(x);}});return u;}
+      return out;
+    });
+  }
   function loadCurated(decadeKey){
-    var list=[];
-    if(decadeKey==='all'){Object.keys(CURATED).forEach(function(k){list=list.concat(CURATED[k]);});}
-    else list=(CURATED[decadeKey]||[]).slice();
-    shuffle(list);list=list.slice(0,35);
-    var cache=getCuratedCache();var out=[];var todo=[];
-    list.forEach(function(str){var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);if(cache[key])out.push(cache[key]);else todo.push({s:s,key:key});});
-    return Promise.all(todo.map(function(item){
-      var q='track:"'+item.s.t+'" artist:"'+item.s.a+'"';
-      return api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q)).then(function(d){
-        var items=(d.tracks&&d.tracks.items)||[];var match=null;
-        for(var i=0;i<items.length;i++){var it=items[i];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(item.s.a))>=0||norm(item.s.a).indexOf(norm(a.name))>=0;})){match=it;break;}}
-        match=match||items[0]||null;
-        if(match){var mt=minTrack(match);cache[item.key]=mt;out.push(mt);}
-      }).catch(function(){});
-    })).then(function(){setCuratedCache(cache);return out;});
+    var list=curatedSongs(decadeKey);shuffle(list);list=list.slice(0,35);
+    return resolveCurated(list,null,false);
+  }
+
+  // ---------- build a real Spotify playlist in the user's account from the curated list ----------
+  function getPlStore(){try{return JSON.parse(localStorage.getItem(LS.curatedPl)||'{}');}catch(e){return {};}}
+  function setPlStore(o){try{localStorage.setItem(LS.curatedPl,JSON.stringify(o));}catch(e){}}
+  function ensureCuratedPlaylist(name,decadeKey){
+    var store=getPlStore();var pid=store[decadeKey];
+    function createPl(){return api('/me/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,public:false,description:'Curated by Music Quiz Trainer — well-known hits across genres and decades.'})}).then(function(p){store[decadeKey]=p.id;setPlStore(store);return p;});}
+    if(pid)return api('/playlists/'+pid).then(function(p){return p;}).catch(function(){return createPl();});
+    return createPl();
+  }
+  function setPlaylistTracks(pid,uris){
+    var first=uris.slice(0,100);var count=0;
+    return api('/playlists/'+pid+'/items',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({uris:first})}).then(function(){count+=first.length;
+      function batch(k){if(k>=uris.length)return Promise.resolve();var chunk=uris.slice(k,k+100);return api('/playlists/'+pid+'/items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uris:chunk})}).then(function(){count+=chunk.length;return batch(k+100);});}
+      return batch(100);
+    }).then(function(){return count;});
+  }
+  function createCuratedPlaylist(decadeKey){
+    var list=curatedSongs(decadeKey);
+    if(!list.length)return;
+    var st=$('curatedStatus'),lk=$('curatedLink'),btn=$('curatedBuildBtn');
+    lk.style.display='none';btn.disabled=true;
+    st.textContent='Resolving '+list.length+' songs on Spotify\u2026 (first build can take a minute)';
+    resolveCurated(list,function(done,total){st.textContent='Resolving '+done+' / '+total+' songs\u2026';},true).then(function(uris){
+      if(!uris.length)throw new Error('Couldn\u2019t resolve any songs.');
+      st.textContent='Creating playlist ('+uris.length+' tracks)\u2026';
+      var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
+      return ensureCuratedPlaylist(name,decadeKey).then(function(pl){return setPlaylistTracks(pl.id,uris).then(function(count){return {pl:pl,count:count};});});
+    }).then(function(r){
+      btn.disabled=false;st.textContent='Done \u2014 '+r.count+' tracks saved to your Spotify.';
+      var url=(r.pl.external_urls&&r.pl.external_urls.spotify)||('https://open.spotify.com/playlist/'+r.pl.id);
+      lk.href=url;lk.textContent='Open your playlist in Spotify \u2197';lk.style.display='';
+    }).catch(function(e){btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not create the playlist.');});
   }
 
   function loadSource(){
@@ -1030,6 +1084,7 @@
     $('startBtn').onclick=startQuiz;
     $('sourceMode').onchange=updateSourceUI;
     $('clearMissesBtn').onclick=function(){setMisses([]);updateSourceUI();toast('Misses cleared.');};
+    $('curatedBuildBtn').onclick=function(){createCuratedPlaylist($('curatedDecade').value);};
     $('playBtn').onclick=togglePlay;
     $('replayBtn').onclick=replay;
     $('skipBtn').onclick=skip;

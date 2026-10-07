@@ -36,18 +36,19 @@ Spotify Web Playback SDK.
 > If login later says your account isn't registered, open the app's **User Management** in the dashboard and
 > add your own Spotify account's email. (New apps start in development mode.)
 
-## 2) Host the single file
+## 2) Host the files
 
-Pick either option — both give you an `https` URL.
+Pick either option — both give you an `https` URL. The app is **`index.html` plus `curated.js`** (the
+large curated song list lives in `curated.js`) — deploy **both files together** in the same folder.
 
 **GitHub Pages**
-1. Create a repo and add `index.html` to it.
+1. Create a repo and add `index.html` **and `curated.js`** to it.
 2. Repo **Settings → Pages →** Source = your branch, folder = `/root`. Save.
 3. Your site appears at `https://<your-user>.github.io/<repo>/`.
 
 **Netlify (drag & drop)**
 1. Go to <https://app.netlify.com/drop>.
-2. Drag the folder containing `index.html` onto the page.
+2. Drag the folder containing `index.html` **and `curated.js`** onto the page.
 3. Netlify gives you a `https://<site>.netlify.app/` URL.
 
 Make sure the hosted URL matches the **Redirect URI** you registered in step 1 exactly (including the
@@ -80,10 +81,14 @@ trailing `/`). The Connect screen displays the precise value to register.
   to drill. Pasted/your playlists must be ones you **own or collaborate on** (Feb 2026 dev‑mode rule — others
   return no tracks). Unplayable/local/podcast items are skipped. *(Decade rounds sample a few **random years**
   from the decade, each taken from the top of search, so the pool is fresh each round but still well‑known.)*
-- **Well-known hits by decade (curated):** a **hand‑picked, taste‑neutral** set of big songs and one‑hit
-  wonders per decade (80s → now). It's assembled from a built‑in list (not Spotify's rankings), and each
-  title is resolved to its Spotify track just so it can play. Pick a decade or "All," and it samples a fresh
-  ~35 each round (cached after first lookup). This is the best source for an unbiased, broad music quiz.
+- **Well-known hits by decade (curated):** a **hand‑picked, taste‑neutral** set of ~**1,300 big songs and
+  one‑hit wonders** spanning every major genre per decade (80s → now). It's assembled from a built‑in list
+  (not Spotify's rankings), and each title is resolved to its Spotify track just so it can play. Pick a decade
+  or "All," and it samples a fresh ~35 each round (cached after first lookup). This is the best source for an
+  unbiased, broad music quiz. You can also hit **"Create / update a Spotify playlist from this list"** to save
+  the whole decade (or all of them) as a **private playlist in your own Spotify account** — re‑running updates
+  the same playlist instead of making duplicates. *(This needs the `playlist-modify-private` permission, so
+  log out and reconnect once to grant it.)*
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
   them (answering one correctly retires it). Clear them any time.
 - **Fair wrong answers:** decoys come from the **same pool as the song** — other artists in the current
