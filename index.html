@@ -421,14 +421,14 @@
   }
 
   // ---------- API wrapper ----------
-  function api(path,opts,retry){
+  function api(path,opts,retry,onWait){
     opts=opts||{};if(retry===undefined)retry=true;
     return getToken().then(function(token){
       var url=path.indexOf('http')===0?path:API+path;
       var headers=Object.assign({'Authorization':'Bearer '+token},opts.headers||{});
       return fetch(url,Object.assign({},opts,{headers:headers})).then(function(res){
-        if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false);}
-        if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry);});}
+        if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait);}
+        if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');opts.__r429=(opts.__r429||0)+1;if(onWait)onWait(ra+1);if(opts.__r429>8)throw new Error('API 429 '+String(path).replace(API,'').split('?')[0]+': rate limited');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry,onWait);});}
         if(res.status===204)return null;
         if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';throw new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));});}
         return res.json();
@@ -536,25 +536,27 @@
 
   // Resolve "Artist|Title" strings to Spotify tracks (cached). onDone(done,total) reports progress.
   function resolveCurated(list,onDone,wantUris){
-    var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;var total=list.length;
+    var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;
+    var seenKey={},work=[];(list||[]).forEach(function(str){var s=splitSong(str);var k=norm(s.a)+'|'+norm(s.t);if(!seenKey[k]){seenKey[k]=1;work.push(str);}});
+    var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;
+    function persist(force){if(force||dirty>=12){setCuratedCache(cache);dirty=0;}}
+    function report(){if(onDone)onDone(done,total,rl);}
+    function finishOne(){done++;persist(false);report();return sleep(wantUris?300:0).then(worker);}
     function worker(){
-      if(i>=list.length)return Promise.resolve();
-      var str=list[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
-      var p;
-      if(cache[key]){out.push(cache[key]);if(cache[key].uri)uris.push(cache[key].uri);p=Promise.resolve();}
-      else{
-        var q='track:"'+s.t+'" artist:"'+s.a+'"';
-        p=api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q)).then(function(d){
-          var items=(d.tracks&&d.tracks.items)||[];var m=null;
-          for(var j=0;j<items.length;j++){var it=items[j];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(s.a))>=0||norm(s.a).indexOf(norm(a.name))>=0;})){m=it;break;}}
-          m=m||items[0]||null;
-          if(m){var mt=minTrack(m);cache[key]=mt;out.push(mt);if(mt.uri)uris.push(mt.uri);}
-        }).catch(function(){});
-      }
-      return p.then(function(){done++;if(onDone)onDone(done,total);return worker();});
+      if(i>=work.length)return Promise.resolve();
+      var str=work[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
+      if(cache[key]){var c=cache[key];out.push(c);if(c.uri)uris.push(c.uri);return finishOne();}
+      var q='track:"'+s.t+'" artist:"'+s.a+'"';
+      var waited=false;
+      return api('/search?type=track&limit=5&market=from_token&q='+encodeURIComponent(q),null,true,function(sec){if(!waited){waited=true;waiters++;}rl.until=Math.max(rl.until||0,Date.now()+sec*1000);rl.waiting=waiters;report();}).then(function(d){
+        var items=(d.tracks&&d.tracks.items)||[];var m=null;
+        for(var j=0;j<items.length;j++){var it=items[j];if(it&&it.artists&&it.artists.some(function(a){return norm(a.name).indexOf(norm(s.a))>=0||norm(s.a).indexOf(norm(a.name))>=0;})){m=it;break;}}
+        m=m||items[0]||null;
+        if(m){var mt=minTrack(m);cache[key]=mt;dirty++;out.push(mt);if(mt.uri)uris.push(mt.uri);}
+      }).catch(function(){failed++;}).then(function(){if(waited){waiters--;if(waiters<0)waiters=0;}if(waiters<=0)rl.until=0;rl.waiting=waiters;return finishOne();});
     }
-    var conc=wantUris?5:8;var ws=[];for(var w=0;w<conc;w++)ws.push(worker());
-    return Promise.all(ws).then(function(){setCuratedCache(cache);
+    var conc=wantUris?2:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
+    return Promise.all(ws).then(function(){persist(true);rl.failed=failed;rl.total=total;
       if(wantUris){var seen={},u=[];uris.forEach(function(x){if(x&&!seen[x]){seen[x]=1;u.push(x);}});return u;}
       return out;
     });
@@ -585,14 +587,19 @@
     if(!list.length)return;
     var st=$('curatedStatus'),lk=$('curatedLink'),btn=$('curatedBuildBtn');
     lk.style.display='none';btn.disabled=true;
-    st.textContent='Resolving '+list.length+' songs on Spotify\u2026 (first build can take a minute)';
-    resolveCurated(list,function(done,total){st.textContent='Resolving '+done+' / '+total+' songs\u2026';},true).then(function(uris){
-      if(!uris.length)throw new Error('Couldn\u2019t resolve any songs.');
-      st.textContent='Creating playlist ('+uris.length+' tracks)\u2026';
+    st.textContent='Finding songs on Spotify\u2026 0 / '+list.length+' (first build is slow but progress is saved)';
+    resolveCurated(list,function(done,total,rl){
+      if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent='Spotify rate limit \u2014 pausing ~'+w+'s, resuming automatically\u2026 ('+done+' / '+total+' found)';}
+      else st.textContent='Finding songs on Spotify\u2026 '+done+' / '+total+' (progress is saved as it goes)';
+    },true).then(function(uris){
+      if(!uris.length)throw new Error('Couldn\u2019t find any songs \u2014 Spotify may be rate\u2011limiting you. Wait ~30s, then click again.');
+      st.textContent='Saving '+uris.length+' tracks to the playlist\u2026';
       var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
-      return ensureCuratedPlaylist(name,decadeKey).then(function(pl){return setPlaylistTracks(pl.id,uris).then(function(count){return {pl:pl,count:count};});});
+      return ensureCuratedPlaylist(name,decadeKey).then(function(pl){return setPlaylistTracks(pl.id,uris).then(function(count){return {pl:pl,count:count,saved:uris.length};});});
     }).then(function(r){
-      btn.disabled=false;st.textContent='Done \u2014 '+r.count+' tracks saved to your Spotify.';
+      btn.disabled=false;
+      var missing=list.length-r.saved;
+      st.textContent=(missing>5?('Saved '+r.count+' tracks so far \u2014 ~'+missing+' still pending (Spotify rate limit). Click the button again to add the rest; it resumes where it left off.'):('Done \u2014 '+r.count+' tracks saved to your Spotify.'));
       var url=(r.pl.external_urls&&r.pl.external_urls.spotify)||('https://open.spotify.com/playlist/'+r.pl.id);
       lk.href=url;lk.textContent='Open your playlist in Spotify \u2197';lk.style.display='';
     }).catch(function(e){btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not create the playlist.');});
