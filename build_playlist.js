@@ -64,13 +64,18 @@ async function ensurePlaylist(userId, name) {
 }
 
 async function existingUris(pid) {
-  const have = {}; let url = '/playlists/' + pid + '/tracks?limit=100&fields=' + encodeURIComponent('next,items(track(uri))');
-  let guard = 0;
-  while (url && guard < 40) {
-    let d; try { d = await api(url); } catch (e) { break; }
-    (d.items || []).forEach((it) => { const tr = it.track || it.item; if (tr && tr.uri) have[tr.uri] = 1; });
-    url = d.next; guard++;
+  const have = {};
+  async function page(base, field) {
+    let url = '/playlists/' + pid + '/' + base + '?limit=100&fields=' + encodeURIComponent('next,items(' + field + '(uri))');
+    let guard = 0;
+    while (url && guard < 40) {
+      const d = await api(url);
+      (d.items || []).forEach((it) => { const tr = it[field]; if (tr && tr.uri) have[tr.uri] = 1; });
+      url = d.next; guard++;
+    }
   }
+  try { await page('tracks', 'track'); }
+  catch (e) { try { await page('items', 'item'); } catch (e2) {} }
   return have;
 }
 
