@@ -540,17 +540,18 @@
     var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;
     var seenKey={},work=[];(list||[]).forEach(function(str){var s=splitSong(str);var k=norm(s.a)+'|'+norm(s.t);if(!seenKey[k]){seenKey[k]=1;work.push(str);}});
     var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;var retried={};
-    var pace=wantUris?180:0;var okStreak=0; // adaptive: speed up while clear, back off on 429
+    var pace=wantUris?180:0;var okStreak=0;var fastN=0;var _lastRep=0; // adaptive + UI-update throttle
     function onOk(){if(!wantUris)return;okStreak++;if(okStreak>=12){okStreak=0;if(pace>80)pace-=15;}}
     function on429(){if(!wantUris)return;okStreak=0;pace=Math.min(1800,Math.max(pace*2,260));}
     function persist(force){if(force||dirty>=12){setCuratedCache(cache);dirty=0;}}
-    function report(){if(onDone)onDone(done,total,rl);}
+    function report(force){if(!onDone)return;var now=Date.now();if(force||now-_lastRep>=120){_lastRep=now;onDone(done,total,rl);}}
+    function brk(){fastN++;return (fastN%60===0?sleep(0):Promise.resolve()).then(worker);}
     function emit(mt){if(!mt)return;out.push(mt);if(mt.uri){uris.push(mt.uri);if(onUri)onUri(mt.uri);}}
     function worker(){
       if(i>=work.length)return Promise.resolve();
       var str=work[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
-      if(known&&known[key]){done++;report();return worker();}
-      if(cache[key]){emit(cache[key]);done++;report();return worker();}
+      if(known&&known[key]){done++;report();return brk();}
+      if(cache[key]){emit(cache[key]);done++;report();return brk();}
       var na=norm(s.a),nt=norm(s.t);var q=s.t+' '+s.a;var waited=false,errd=false;
       return api('/search?type=track&limit=8&q='+encodeURIComponent(q),null,true,function(sec){if(!waited){waited=true;waiters++;}on429();rl.until=Math.max(rl.until||0,Date.now()+sec*1000);rl.waiting=waiters;report();}).then(function(d){
         var items=(d.tracks&&d.tracks.items)||[];var byA=null,byB=null;
@@ -620,18 +621,22 @@
       PL=pl;
       var url=(pl.external_urls&&pl.external_urls.spotify)||('https://open.spotify.com/playlist/'+pl.id);
       lk.href=url;lk.textContent='Open your playlist in Spotify \u2197 (it fills in live)';lk.style.display='';
-      st.textContent='Playlist ready \u2014 open it in Spotify to watch songs appear\u2026';
+      st.textContent='Comparing with your Spotify playlist to skip what\u2019s already there\u2026';
       return getPlaylistState(pl.id);
     }).then(function(existing){
       seen=existing.uris||{};var knownKeys=existing.keys||{};
       var have=Object.keys(seen).length;
-      return resolveCurated(list,function(done,total,rl){
+      // Diff first: only resolve songs NOT already in the playlist (match by artist|title).
+      var missing=list.filter(function(str){var s=splitSong(str);return !knownKeys[norm(s.a)+'|'+norm(s.t)];});
+      var toAdd=missing.length;
+      st.textContent='Compared \u2014 '+have+' already in playlist, '+toAdd+' to add\u2026';
+      return resolveCurated(missing,function(done,total,rl){
         if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission.':'');return;}
-        var base=(have>0?('Resuming \u2014 '+have+' already in playlist \u00b7 '):'');
-        var fail=(rl&&rl.failed?(' \u00b7 '+rl.failed+' not found yet'):'');
-        if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent=base+'Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' new added, '+done+'/'+total+' checked)'+fail;}
-        else st.textContent=base+'Finding & adding songs\u2026 '+added+' new added, '+done+' / '+total+' checked'+fail;
-      },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}},knownKeys).then(function(){return flush(true);});
+        var base=(have>0?(have+' already in playlist \u00b7 '):'');
+        var fail=(rl&&rl.failed?(' \u00b7 '+rl.failed+' not found'):'');
+        if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent=base+'Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' added, '+done+'/'+total+' new checked)'+fail;}
+        else st.textContent=base+'Adding new songs\u2026 '+added+' added, '+done+' / '+total+' checked'+fail;
+      },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}}).then(function(){return flush(true);});
     }).then(function(){return flushing;}).then(function(){
       btn.disabled=false;
       if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission, then retry.':' \u2014 please try again.');return;}
