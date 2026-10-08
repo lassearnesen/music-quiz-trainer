@@ -429,7 +429,7 @@
       var headers=Object.assign({'Authorization':'Bearer '+token},opts.headers||{});
       return fetch(url,Object.assign({},opts,{headers:headers})).then(function(res){
         if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait);}
-        if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');opts.__r429=(opts.__r429||0)+1;if(onWait)onWait(ra+1);if(opts.__r429>8)throw new Error('API 429 '+String(path).replace(API,'').split('?')[0]+': rate limited');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry,onWait);});}
+        if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');opts.__r429=(opts.__r429||0)+1;if(onWait)onWait(ra+1);if(opts.__r429>12)throw new Error('API 429 '+String(path).replace(API,'').split('?')[0]+': rate limited');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry,onWait);});}
         if(res.status===204)return null;
         if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';throw new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));});}
         return res.json();
@@ -540,7 +540,7 @@
     var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;
     var seenKey={},work=[];(list||[]).forEach(function(str){var s=splitSong(str);var k=norm(s.a)+'|'+norm(s.t);if(!seenKey[k]){seenKey[k]=1;work.push(str);}});
     var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;var retried={};
-    var pace=wantUris?180:0;var okStreak=0;var fastN=0;var _lastRep=0; // adaptive + UI-update throttle
+    var pace=wantUris?280:0;var okStreak=0;var fastN=0;var _lastRep=0; // adaptive + UI-update throttle
     function onOk(){if(!wantUris)return;okStreak++;if(okStreak>=12){okStreak=0;if(pace>80)pace-=15;}}
     function on429(){if(!wantUris)return;okStreak=0;pace=Math.min(1800,Math.max(pace*2,260));}
     function persist(force){if(force||dirty>=12){setCuratedCache(cache);dirty=0;}}
@@ -569,7 +569,7 @@
         rl.failed=failed;persist(false);report();return sleep(pace).then(worker);
       });
     }
-    var conc=wantUris?3:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
+    var conc=wantUris?2:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
     return Promise.all(ws).then(function(){persist(true);rl.failed=failed;rl.total=total;
       if(wantUris){var seen={},u=[];uris.forEach(function(x){if(x&&!seen[x]){seen[x]=1;u.push(x);}});return u;}
       return out;
@@ -609,6 +609,16 @@
     var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
     st.textContent='Creating the playlist in Spotify\u2026';
     var PL=null;var seen={};var buffer=[];var added=0;var flushing=Promise.resolve();var addErr=null;
+    var lastRl=null;var building=true;
+    var ticker=setInterval(function(){
+      if(!building){clearInterval(ticker);return;}
+      if(addErr)return;
+      if(lastRl&&lastRl.until&&lastRl.until>Date.now()){
+        var w=Math.max(1,Math.ceil((lastRl.until-Date.now())/1000));
+        st.textContent='Spotify rate limit \u2014 waiting '+w+'s\u2026 it resumes automatically ('+added+' added so far)';
+      }
+    },1000);
+    function stopTicker(){building=false;if(ticker)clearInterval(ticker);}
     function flush(force){
       if(addErr)return flushing;
       if(buffer.length>=5||(force&&buffer.length)){
@@ -631,6 +641,7 @@
       var toAdd=missing.length;
       st.textContent='Compared \u2014 '+have+' already in playlist, '+toAdd+' to add\u2026';
       return resolveCurated(missing,function(done,total,rl){
+        lastRl=rl;
         if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission.':'');return;}
         var base=(have>0?(have+' already in playlist \u00b7 '):'');
         var fail=(rl&&rl.failed?(' \u00b7 '+rl.failed+' not found'):'');
@@ -638,10 +649,11 @@
         else st.textContent=base+'Adding new songs\u2026 '+added+' added, '+done+' / '+total+' checked'+fail;
       },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}}).then(function(){return flush(true);});
     }).then(function(){return flushing;}).then(function(){
-      btn.disabled=false;
+      stopTicker();btn.disabled=false;
       if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission, then retry.':' \u2014 please try again.');return;}
-      st.textContent=(added>0?('Done \u2014 added '+added+' songs to your private playlist \u201c'+name+'\u201d (Your Library).'):('Your playlist \u201c'+name+'\u201d is already up to date in Your Library.'));
-    }).catch(function(e){btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not build the playlist.');});
+      var pending=(lastRl&&lastRl.failed)||0;
+      st.textContent=(added>0?('Done \u2014 added '+added+' songs to \u201c'+name+'\u201d (Your Library).'+(pending>5?' ~'+pending+' were rate\u2011limited \u2014 click again to add them (progress is saved).':'')):(pending>5?('Spotify rate\u2011limited \u2014 added 0 this round. Wait a couple minutes and click again; progress is saved.'):('Your playlist \u201c'+name+'\u201d is already up to date in Your Library.')));
+    }).catch(function(e){stopTicker();btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not build the playlist.');});
   }
   function showSavedCuratedPlaylist(){
     var lk=$('curatedLink');if(!lk)return;
