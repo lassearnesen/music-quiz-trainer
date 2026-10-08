@@ -159,6 +159,7 @@
   <section id="screen-setup" class="screen">
     <div class="topbar">
       <span class="pill"><span id="userDot" class="dot ok"></span><span id="userName">Connected</span></span>
+      <button id="copyTokenBtn" class="btn ghost" title="Copy a temporary Spotify access token to paste to the assistant (for building a playlist). Expires in ~1 hour; log out to revoke.">Copy token</button>
       <button id="logoutBtn" class="btn ghost">Log out</button>
     </div>
     <h2>Start training</h2>
@@ -1128,6 +1129,13 @@
       else toast(txt);
     };
     $('logoutBtn').onclick=logout;
+    $('copyTokenBtn').onclick=function(){
+      var t=localStorage.getItem(LS.access)||'';
+      if(!t){toast('Not connected \u2014 click Connect first.');return;}
+      function done(){toast('Access token copied \u2014 paste it to the assistant.');}
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){window.prompt('Copy your access token:',t);});}
+      else window.prompt('Copy your access token:',t);
+    };
     $('startBtn').onclick=startQuiz;
     $('sourceMode').onchange=updateSourceUI;
     $('clearMissesBtn').onclick=function(){setMisses([]);updateSourceUI();toast('Misses cleared.');};
