@@ -97,6 +97,9 @@ trailing `/`). The Connect screen displays the precise value to register.
   checked songs, unmatched songs, the current song, and cooldowns. A request timeout or an API error
   stops the import with its actual error instead of silently skipping songs. Rate-limit retries are
   limited to three retries and 60 seconds of waiting per request; longer cooldowns pause the import.
+  When Spotify's `Retry-After` header is unavailable, retries wait 5, 10, then 20 seconds rather than
+  guessing a one-second cooldown. Diagnostics distinguish these fallback waits from Spotify-provided
+  cooldowns and include the rate-limit error message when returned.
   Restarting compares the same playlist again and uses successful cached lookups, including tracks
   resolved just before an interrupted write. Your existing playlist is never cleared.
   If an import stalls or stops, click **Copy import diagnostics (no credentials)** and share the

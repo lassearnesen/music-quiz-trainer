@@ -222,7 +222,7 @@ test('diagnostics include comparison, request, retry and failure details without
   await h.context.importTest.copyImportDiagnostics();
   const text=h.els.curatedDiagnostics.value;
   const report=JSON.parse(text);
-  assert.equal(report.version,'24');
+  assert.equal(report.version,'25');
   assert.equal(report.outcome,'stopped');
   assert.equal(report.progress.checked,0);
   assert.equal(report.events.find(e=>e.event==='comparison').missing,12);
@@ -245,4 +245,32 @@ test('persistent one-second 429s report retries and accumulated wait accurately'
   const report=JSON.parse(h.els.curatedDiagnostics.value);
   assert.equal(report.events.filter(e=>e.event==='response'&&e.status===429).length,4);
   assert.equal(report.events.filter(e=>e.event==='cooldown').length,3);
+});
+
+test('missing Retry-After uses increasing waits and reports the Spotify error without inventing a header', async () => {
+  const h=setup(2);
+  const fetch=h.context.fetch;
+  h.context.fetch=async(url,opts)=>url.includes('/search')
+    ?response({error:{message:'Search quota exceeded'}},429,null):fetch(url,opts);
+  await h.build();
+  assert.match(h.els.curatedStatus.textContent,/35 seconds of waiting and 3 retries/);
+  assert.match(h.els.curatedStatus.textContent,/Retry-After unavailable.*Search quota exceeded/);
+  assert.ok(!h.els.curatedStatus.textContent.includes('Retry-After: 1s'));
+  await h.context.importTest.copyImportDiagnostics();
+  const report=JSON.parse(h.els.curatedDiagnostics.value);
+  assert.deepEqual(report.events.filter(e=>e.event==='cooldown').map(e=>e.seconds),[5,10,20]);
+  assert.ok(report.events.some(e=>e.event==='rate-limit'&&e.message==='Search quota exceeded'&&e.retryAfterSource==='fallback-backoff'));
+});
+
+test('missing-header rate limit can recover on a later retry and save tracks', async () => {
+  const h=setup(12);
+  const fetch=h.context.fetch;
+  let attempts=0;
+  h.context.fetch=async(url,opts)=>{
+    if(url.includes('/search')&&attempts++<2)return response({},429,null);
+    return fetch(url,opts);
+  };
+  await h.build();
+  assert.equal(h.playlist.length,12);
+  assert.ok(h.waits.includes(5000)&&h.waits.includes(10000));
 });

@@ -445,7 +445,7 @@
     return {endpoint:u.pathname.replace(/^\/v1/,'').replace(/\/playlists\/[^/]+/,'/playlists/{saved-playlist}'),method:method||'GET',query:query};
   }
   function copyImportDiagnostics(){
-    var text=JSON.stringify(importDiagnostics||{version:'24',message:'Start an import first to collect diagnostics.'},null,2);
+    var text=JSON.stringify(importDiagnostics||{version:'25',message:'Start an import first to collect diagnostics.'},null,2);
     var area=$('curatedDiagnostics');
     area.value=text;area.style.display='';
     if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -469,17 +469,23 @@
         logImport('response',Object.assign({},request,{status:res.status,durationMs:Date.now()-started,retryAfter:res.headers.get('Retry-After')}));
         if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait,attempt);}
         if(res.status===429){
-          var ra=Number(res.headers.get('Retry-After')||'1');
-          if(!Number.isFinite(ra)||ra<0)ra=1;
-          var sec=ra+1;
-          if(++attempt.rateRetries>3||attempt.waited+sec>60){
-            var limited=new Error('API 429 '+path.split('?')[0]+': rate limit persisted after '+attempt.waited+' seconds of waiting and '+(attempt.rateRetries-1)+' retries (latest Retry-After: '+Math.ceil(ra)+'s). Import paused; retry later to resume.');
-            limited.status=429;throw limited;
-          }
-          attempt.waited+=sec;
-          logImport('cooldown',{seconds:sec,totalWaitSeconds:attempt.waited,retry:attempt.rateRetries});
-          if(onWait)onWait(sec);
-          return sleep(sec*1000).then(function(){return api(path,opts,retry,onWait,attempt);});
+          var raw=res.headers.get('Retry-After');
+          var ra=raw!==null&&raw.trim()!==''?Number(raw):NaN;
+          var supplied=Number.isFinite(ra)&&ra>=0;
+          var sec=supplied?ra+1:5*Math.pow(2,attempt.rateRetries);
+          return res.json().catch(function(){return {};}).then(function(j){
+            var reason=j.error&&typeof j.error.message==='string'?j.error.message.slice(0,500):'';
+            logImport('rate-limit',{retryAfterSource:supplied?'spotify-header':'fallback-backoff',message:reason});
+            if(++attempt.rateRetries>3||attempt.waited+sec>60){
+              var detail=supplied?'latest Retry-After: '+Math.ceil(ra)+'s':'Retry-After unavailable; used increasing fallback waits';
+              var limited=new Error('API 429 '+path.split('?')[0]+': rate limit persisted after '+attempt.waited+' seconds of waiting and '+(attempt.rateRetries-1)+' retries ('+detail+').'+(reason?' Spotify: '+reason+'.':'')+' Import paused; retry later to resume.');
+              limited.status=429;throw limited;
+            }
+            attempt.waited+=sec;
+            logImport('cooldown',{seconds:sec,totalWaitSeconds:attempt.waited,retry:attempt.rateRetries,source:supplied?'spotify-header':'fallback-backoff'});
+            if(onWait)onWait(sec);
+            return sleep(sec*1000).then(function(){return api(path,opts,retry,onWait,attempt);});
+          });
         }
         if(res.status===204)return null;
         if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';var error=new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));error.status=res.status;throw error;});}
@@ -678,7 +684,7 @@
     var list=curatedSongs(decadeKey);
     if(!list.length)return;
     var st=$('curatedStatus'),lk=$('curatedLink'),btn=$('curatedBuildBtn');
-    importDiagnostics={version:'24',startedAt:new Date().toISOString(),decade:decadeKey,curatedEntries:list.length,events:[]};
+    importDiagnostics={version:'25',startedAt:new Date().toISOString(),decade:decadeKey,curatedEntries:list.length,events:[]};
     $('curatedDiagnostics').style.display='none';
     lk.style.display='none';btn.disabled=true;
     var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
