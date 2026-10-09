@@ -91,6 +91,16 @@ trailing `/`). The Connect screen displays the precise value to register.
   Spotify account** — the playlist is created up front and **fills in live** (open it in Spotify to watch songs
   appear), and re‑running only adds anything missing instead of duplicating. *(This needs the
   `playlist-modify-private` permission, so log out and reconnect once to grant it.)*
+  On restart, the importer reads every page of the saved playlist before searching, and skips songs
+  already present by artist/title or a cached matching Spotify URI. It saves **10 tracks at a time**
+  and waits for Spotify to confirm each batch before continuing. Progress distinguishes saved tracks,
+  checked songs, unmatched songs, the current song, and cooldowns. A request timeout or an API error
+  stops the import with its actual error instead of silently skipping songs. Rate-limit retries are
+  limited to three retries and 60 seconds of waiting per request; longer cooldowns pause the import.
+  Restarting compares the same playlist again and uses successful cached lookups, including tracks
+  resolved just before an interrupted write. Your existing playlist is never cleared.
+
+  Import regression tests (Node 20+): `node --test tests\playlist-import.cjs`.
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes
   them (answering one correctly retires it). Clear them any time.
 - **Fair wrong answers:** decoys come from the **same pool as the song** — other artists in the current

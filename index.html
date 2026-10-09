@@ -405,6 +405,14 @@
   }
 
   var _refreshing=null;
+  function spotifyFetch(url,opts,label){
+    var controller=new AbortController();
+    var timeout=setTimeout(function(){controller.abort();},30000);
+    return fetch(url,Object.assign({},opts,{signal:controller.signal})).catch(function(e){
+      if(e.name==='AbortError')throw new Error('Spotify request timed out after 30 seconds: '+label+'. Retry to resume.');
+      throw e;
+    }).finally(function(){clearTimeout(timeout);});
+  }
   function getToken(){
     var exp=Number(localStorage.getItem(LS.exp)||0);
     var access=localStorage.getItem(LS.access);
@@ -413,8 +421,8 @@
     if(!refresh)return Promise.reject(new Error('Not logged in'));
     if(!_refreshing){
       var body=new URLSearchParams({grant_type:'refresh_token',refresh_token:refresh,client_id:getClientId()});
-      _refreshing=fetch(AUTH+'/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
-        .then(function(r){if(!r.ok)throw new Error('refresh');return r.json();})
+      _refreshing=spotifyFetch(AUTH+'/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body},'token refresh')
+        .then(function(r){if(!r.ok)throw new Error('Spotify token refresh failed (HTTP '+r.status+'). Reconnect to Spotify.');return r.json();})
         .then(function(d){storeTokens(d);return d.access_token;})
         .finally(function(){_refreshing=null;});
     }
@@ -422,16 +430,28 @@
   }
 
   // ---------- API wrapper ----------
-  function api(path,opts,retry,onWait){
+  function api(path,opts,retry,onWait,attempt){
     opts=opts||{};if(retry===undefined)retry=true;
+    attempt=attempt||{rateRetries:0,waited:0};
     return getToken().then(function(token){
       var url=path.indexOf('http')===0?path:API+path;
       var headers=Object.assign({'Authorization':'Bearer '+token},opts.headers||{});
-      return fetch(url,Object.assign({},opts,{headers:headers})).then(function(res){
-        if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait);}
-        if(res.status===429){var ra=Number(res.headers.get('Retry-After')||'1');opts.__r429=(opts.__r429||0)+1;if(onWait)onWait(ra+1);if(opts.__r429>12)throw new Error('API 429 '+String(path).replace(API,'').split('?')[0]+': rate limited');return sleep((ra+1)*1000).then(function(){return api(path,opts,retry,onWait);});}
+      return spotifyFetch(url,Object.assign({},opts,{headers:headers}),path.split('?')[0]).then(function(res){
+        if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait,attempt);}
+        if(res.status===429){
+          var ra=Number(res.headers.get('Retry-After')||'1');
+          if(!Number.isFinite(ra)||ra<0)ra=1;
+          var sec=ra+1;
+          if(++attempt.rateRetries>3||attempt.waited+sec>60){
+            var limited=new Error('API 429 '+path.split('?')[0]+': Spotify requested a '+Math.ceil(ra)+' second cooldown. Import paused; retry later to resume.');
+            limited.status=429;throw limited;
+          }
+          attempt.waited+=sec;
+          if(onWait)onWait(sec);
+          return sleep(sec*1000).then(function(){return api(path,opts,retry,onWait,attempt);});
+        }
         if(res.status===204)return null;
-        if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';throw new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));});}
+        if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';var error=new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));error.status=res.status;throw error;});}
         return res.json();
       });
     });
@@ -535,45 +555,61 @@
   function CUR(){return (window.MQT_CURATED||CURATED);}
   function curatedSongs(decadeKey){var c=CUR();var list=[];if(decadeKey==='all'){Object.keys(c).forEach(function(k){list=list.concat(c[k]);});}else list=(c[decadeKey]||[]).slice();return list;}
 
-  // Resolve "Artist|Title" strings to Spotify tracks (cached). onDone(done,total) reports progress.
+  function songText(s){
+    return norm(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/&/g,' and ').replace(/[^a-z0-9]+/g,' ').trim();
+  }
+  function songTitle(s){
+    return songText((s||'').replace(/\s*[-(]\s*(?:\d{4}\s+)?remaster(?:ed)?[^)]*\)?/ig,''));
+  }
+  function curatedMatch(t,s){
+    return usableTrack(t)&&songTitle(t.name)===songTitle(s.t)&&t.artists.some(function(a){return songText(a.name)===songText(s.a);});
+  }
+  // Playlist imports await each emitted URI, so writes cannot lag behind searches.
   function resolveCurated(list,onDone,wantUris,onUri,known){
     var cache=getCuratedCache();var out=[];var uris=[];var i=0;var done=0;
     var seenKey={},work=[];(list||[]).forEach(function(str){var s=splitSong(str);var k=norm(s.a)+'|'+norm(s.t);if(!seenKey[k]){seenKey[k]=1;work.push(str);}});
-    var total=work.length;var dirty=0;var rl={until:0};var failed=0;var waiters=0;var retried={};
-    var pace=wantUris?280:0;var okStreak=0;var fastN=0;var _lastRep=0; // adaptive + UI-update throttle
-    function onOk(){if(!wantUris)return;okStreak++;if(okStreak>=12){okStreak=0;if(pace>80)pace-=15;}}
-    function on429(){if(!wantUris)return;okStreak=0;pace=Math.min(1800,Math.max(pace*2,260));}
-    function persist(force){if(force||dirty>=12){setCuratedCache(cache);dirty=0;}}
-    function report(force){if(!onDone)return;var now=Date.now();if(force||now-_lastRep>=120){_lastRep=now;onDone(done,total,rl);}}
-    function brk(){fastN++;return (fastN%60===0?sleep(0):Promise.resolve()).then(worker);}
-    function emit(mt){if(!mt)return;out.push(mt);if(mt.uri){uris.push(mt.uri);if(onUri)onUri(mt.uri);}}
+    var total=work.length;var rl={until:0,failed:0,found:0,current:''};
+    function report(){if(onDone)onDone(done,total,rl);}
+    function emit(mt){
+      out.push(mt);uris.push(mt.uri);rl.found++;
+      return onUri?Promise.resolve(onUri(mt.uri)):Promise.resolve();
+    }
+    function search(q,s){
+      return api('/search?type=track&limit=10&q='+encodeURIComponent(q),null,true,function(sec){
+        rl.until=Date.now()+sec*1000;report();
+      }).then(function(d){
+        rl.until=0;
+        return ((d.tracks&&d.tracks.items)||[]).find(function(t){return curatedMatch(t,s);})||null;
+      });
+    }
     function worker(){
       if(i>=work.length)return Promise.resolve();
       var str=work[i++];var s=splitSong(str);var key=norm(s.a)+'|'+norm(s.t);
-      if(known&&known[key]){done++;report();return brk();}
-      if(cache[key]){emit(cache[key]);done++;report();return brk();}
-      var na=norm(s.a),nt=norm(s.t);var q=s.t+' '+s.a;var waited=false,errd=false;
-      return api('/search?type=track&limit=8&q='+encodeURIComponent(q),null,true,function(sec){if(!waited){waited=true;waiters++;}on429();rl.until=Math.max(rl.until||0,Date.now()+sec*1000);rl.waiting=waiters;report();}).then(function(d){
-        var items=(d.tracks&&d.tracks.items)||[];var byA=null,byB=null;
-        for(var j=0;j<items.length;j++){var it=items[j];if(!it||!it.artists||!it.artists.length)continue;
-          var am=it.artists.some(function(a){var an=norm(a.name);return an.indexOf(na)>=0||na.indexOf(an)>=0;});
-          if(am){if(!byA)byA=it;var nm=norm(it.name);if(!byB&&(nm.indexOf(nt)>=0||nt.indexOf(nm)>=0))byB=it;}
-        }
-        var m=byB||byA||items[0]||null;
-        if(m){var mt=minTrack(m);cache[key]=mt;dirty++;emit(mt);}
-        onOk();
-      }).catch(function(){errd=true;}).then(function(){
-        if(waited){waiters--;if(waiters<0)waiters=0;}if(waiters<=0)rl.until=0;rl.waiting=waiters;
-        if(errd&&!retried[key]){retried[key]=1;work.push(str);}
-        else{done++;if(errd)failed++;}
-        rl.failed=failed;persist(false);report();return sleep(pace).then(worker);
+      rl.current=s.a+' - '+s.t;report();
+      if(known&&known[key]){done++;return sleep(0).then(worker);}
+      var cached=curatedMatch(cache[key],s);
+      var lookup;
+      if(cached)lookup=Promise.resolve(cache[key]);
+      else{
+        delete cache[key];
+        lookup=search(s.t+' '+s.a,s).then(function(t){
+          if(t)return t;
+          return sleep(wantUris?1000:0).then(function(){return search('track:"'+s.t.replace(/"/g,'')+'" artist:"'+s.a.replace(/"/g,'')+'"',s);});
+        });
+      }
+      return lookup.then(function(t){
+        if(!t){rl.failed++;return;}
+        var mt=minTrack(t);cache[key]=mt;if(!cached)setCuratedCache(cache);
+        return emit(mt);
+      }).then(function(){
+        done++;report();return sleep(wantUris&&!cached?1000:0).then(worker);
       });
     }
-    var conc=wantUris?2:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
-    return Promise.all(ws).then(function(){persist(true);rl.failed=failed;rl.total=total;
+    var conc=wantUris?1:6;var ws=[];for(var w=0;w<conc&&w<work.length;w++)ws.push(worker());
+    return Promise.all(ws).then(function(){report();
       if(wantUris){var seen={},u=[];uris.forEach(function(x){if(x&&!seen[x]){seen[x]=1;u.push(x);}});return u;}
       return out;
-    });
+    }).finally(function(){setCuratedCache(cache);});
   }
   function loadCurated(decadeKey){
     var list=curatedSongs(decadeKey);shuffle(list);list=list.slice(0,35);
@@ -586,20 +622,23 @@
   function ensureCuratedPlaylist(name,decadeKey){
     var store=getPlStore();var pid=store[decadeKey];
     function createPl(){return api('/me/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,public:false,description:'Curated by Music Quiz Trainer — well-known hits across genres and decades.'})}).then(function(p){store[decadeKey]=p.id;setPlStore(store);return p;});}
-    if(pid)return api('/playlists/'+pid).then(function(p){return p;}).catch(function(){return createPl();});
+    if(pid)return api('/playlists/'+pid).catch(function(e){if(e.status===404)return createPl();throw e;});
     return createPl();
   }
   function getPlaylistState(pid){
     var uris={},keys={};var guard=0;
-    function page(u){return api(u).then(function(d){(d.items||[]).forEach(function(it){var t=it.item;if(t&&t.uri){uris[t.uri]=1;var an=(t.artists&&t.artists[0]&&t.artists[0].name)||'';if(t.name&&an)keys[norm(an)+'|'+norm(t.name)]=1;}});guard++;if(d.next&&guard<30)return page(d.next);});}
-    return page('/playlists/'+pid+'/items?limit=100&fields='+encodeURIComponent('next,items(item(uri,name,artists(name)))')).then(function(){return {uris:uris,keys:keys};}).catch(function(){return {uris:uris,keys:keys};});
+    function page(u){return api(u).then(function(d){
+      (d.items||[]).forEach(function(it){var t=it.item||it.track;if(t&&t.uri){uris[t.uri]=1;(t.artists||[]).forEach(function(a){if(t.name&&a.name)keys[songText(a.name)+'|'+songTitle(t.name)]=1;});}});
+      guard++;if(d.next){if(guard>=100)throw new Error('Playlist comparison incomplete; import stopped to avoid duplicates.');return page(d.next);}
+    });}
+    return page('/playlists/'+pid+'/items?limit=100').then(function(){return {uris:uris,keys:keys};});
   }
   var _addEp=null;
-  function addTracks(pid,uris){
+  function addTracks(pid,uris,onWait){
     var body=JSON.stringify({uris:uris});
-    function post(ep){return api('/playlists/'+pid+'/'+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:body}).then(function(r){_addEp=ep;return r;});}
+    function post(ep){return api('/playlists/'+pid+'/'+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:body},true,onWait).then(function(r){if(!r||!r.snapshot_id)throw new Error('Spotify did not confirm the playlist write. Retry to compare and resume.');_addEp=ep;return r;});}
     if(_addEp)return post(_addEp);
-    return post('tracks').catch(function(){return post('items');});
+    return post('items').catch(function(e){if(e.status===404||e.status===405)return post('tracks');throw e;});
   }
   function createCuratedPlaylist(decadeKey){
     var list=curatedSongs(decadeKey);
@@ -608,26 +647,33 @@
     lk.style.display='none';btn.disabled=true;
     var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
     st.textContent='Creating the playlist in Spotify\u2026';
-    var PL=null;var seen={};var buffer=[];var added=0;var flushing=Promise.resolve();var addErr=null;
-    var lastRl=null;var building=true;
+    var PL=null;var seen={};var buffer=[];var added=0;
+    var lastRl=null;var building=true;var have=0;var remaining=0;var checked=0;var stage='Comparing playlist';
+    var waitUntil=0;var started=Date.now();
+    function showProgress(){
+      var until=Math.max(waitUntil,lastRl&&lastRl.until||0);
+      var wait=until>Date.now()?(' | Spotify cooldown: '+Math.ceil((until-Date.now())/1000)+'s remaining'):'';
+      st.textContent=stage+' | '+have+' already saved | '+added+' added this run | '+checked+'/'+remaining+' checked'+
+        (lastRl&&lastRl.failed?' | '+lastRl.failed+' unmatched':'')+wait+
+        ' | '+Math.floor((Date.now()-started)/1000)+'s elapsed'+
+        (lastRl&&lastRl.current?' | '+lastRl.current:'');
+    }
     var ticker=setInterval(function(){
       if(!building){clearInterval(ticker);return;}
-      if(addErr)return;
-      if(lastRl&&lastRl.until&&lastRl.until>Date.now()){
-        var w=Math.max(1,Math.ceil((lastRl.until-Date.now())/1000));
-        st.textContent='Spotify rate limit \u2014 waiting '+w+'s\u2026 it resumes automatically ('+added+' added so far)';
-      }
+      showProgress();
     },1000);
     function stopTicker(){building=false;if(ticker)clearInterval(ticker);}
     function flush(force){
-      if(addErr)return flushing;
-      if(buffer.length>=5||(force&&buffer.length)){
-        var batch=buffer.splice(0,100);
-        flushing=flushing.then(function(){if(addErr)return;return addTracks(PL.id,batch).then(function(){added+=batch.length;},function(e){if(!addErr){addErr=e;flagReconnect(e);}});});
-      }
-      return flushing;
+      if(buffer.length<10&&!force||!buffer.length)return Promise.resolve();
+      var batch=buffer.slice(0,10);
+      stage='Saving '+batch.length+' tracks to Spotify';showProgress();
+      return addTracks(PL.id,batch,function(sec){waitUntil=Date.now()+sec*1000;showProgress();}).then(function(){
+        buffer.splice(0,batch.length);added+=batch.length;waitUntil=0;
+        stage='Finding missing songs';showProgress();
+        if(buffer.length>=10||force&&buffer.length)return flush(force);
+      });
     }
-    ensureCuratedPlaylist(name,decadeKey).then(function(pl){
+    return ensureCuratedPlaylist(name,decadeKey).then(function(pl){
       PL=pl;
       var url=(pl.external_urls&&pl.external_urls.spotify)||('https://open.spotify.com/playlist/'+pl.id);
       lk.href=url;lk.textContent='Open your playlist in Spotify \u2197 (it fills in live)';lk.style.display='';
@@ -635,25 +681,29 @@
       return getPlaylistState(pl.id);
     }).then(function(existing){
       seen=existing.uris||{};var knownKeys=existing.keys||{};
-      var have=Object.keys(seen).length;
-      // Diff first: only resolve songs NOT already in the playlist (match by artist|title).
-      var missing=list.filter(function(str){var s=splitSong(str);return !knownKeys[norm(s.a)+'|'+norm(s.t)];});
-      var toAdd=missing.length;
-      st.textContent='Compared \u2014 '+have+' already in playlist, '+toAdd+' to add\u2026';
+      have=Object.keys(seen).length;
+      var cache=getCuratedCache();var unique={};
+      var missing=list.filter(function(str){
+        var s=splitSong(str),key=norm(s.a)+'|'+norm(s.t);
+        if(unique[key])return false;unique[key]=1;
+        if(knownKeys[songText(s.a)+'|'+songTitle(s.t)])return false;
+        return !(curatedMatch(cache[key],s)&&seen[cache[key].uri]);
+      });
+      remaining=missing.length;stage='Finding missing songs';showProgress();
       return resolveCurated(missing,function(done,total,rl){
-        lastRl=rl;
-        if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission.':'');return;}
-        var base=(have>0?(have+' already in playlist \u00b7 '):'');
-        var fail=(rl&&rl.failed?(' \u00b7 '+rl.failed+' not found'):'');
-        if(rl&&rl.until&&rl.until>Date.now()){var w=Math.max(1,Math.ceil((rl.until-Date.now())/1000));st.textContent=base+'Spotify rate limit \u2014 pausing ~'+w+'s\u2026 ('+added+' added, '+done+'/'+total+' new checked)'+fail;}
-        else st.textContent=base+'Adding new songs\u2026 '+added+' added, '+done+' / '+total+' checked'+fail;
-      },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);flush(false);}}).then(function(){return flush(true);});
-    }).then(function(){return flushing;}).then(function(){
+        lastRl=rl;checked=done;showProgress();
+      },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);return flush(false);}}).then(function(){return flush(true);});
+    }).then(function(){
       stopTicker();btn.disabled=false;
-      if(addErr){st.textContent='Couldn\u2019t add songs to the playlist: '+((addErr&&addErr.message)||'error')+(S.needReconnect?' \u2014 log out & reconnect to grant playlist permission, then retry.':' \u2014 please try again.');return;}
       var pending=(lastRl&&lastRl.failed)||0;
-      st.textContent=(added>0?('Done \u2014 added '+added+' songs to \u201c'+name+'\u201d (Your Library).'+(pending>5?' ~'+pending+' were rate\u2011limited \u2014 click again to add them (progress is saved).':'')):(pending>5?('Spotify rate\u2011limited \u2014 added 0 this round. Wait a couple minutes and click again; progress is saved.'):('Your playlist \u201c'+name+'\u201d is already up to date in Your Library.')));
-    }).catch(function(e){stopTicker();btn.disabled=false;flagReconnect(e);st.textContent=S.needReconnect?'Needs permission \u2014 Log out and reconnect to allow playlist creation, then retry.':((e&&e.message)||'Could not build the playlist.');});
+      st.textContent='Finished: '+added+' added this run; '+have+' already saved.'+
+        (pending?' '+pending+' songs had no matching artist/title on Spotify; they remain pending.':' All compared songs are saved.');
+    }).catch(function(e){
+      stopTicker();btn.disabled=false;flagReconnect(e);
+      st.textContent='Import stopped after '+checked+' checks and '+added+' saved this run: '+e.message+
+        (e.status===403?' Log out and reconnect to check playlist permissions.':'')+
+        ' Your playlist and successful lookups are retained. Click Create / update later to compare and resume.';
+    });
   }
   function showSavedCuratedPlaylist(){
     var lk=$('curatedLink');if(!lk)return;
