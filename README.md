@@ -99,6 +99,10 @@ trailing `/`). The Connect screen displays the precise value to register.
   limited to three retries and 60 seconds of waiting per request; longer cooldowns pause the import.
   Restarting compares the same playlist again and uses successful cached lookups, including tracks
   resolved just before an interrupted write. Your existing playlist is never cleared.
+  If an import stalls or stops, click **Copy import diagnostics (no credentials)** and share the
+  report. It includes the app version, playlist-comparison counts, current song, request timings,
+  response codes, and retry/cooldown history (the last 200 events). It excludes tokens, authorization
+  headers and playlist IDs. Diagnostics are kept in memory for the current run; copy before reloading.
 
   Import regression tests (Node 20+): `node --test tests\playlist-import.cjs`.
 - **Spaced repetition:** every song you miss is saved locally; the **"Drill my misses"** source re‑quizzes

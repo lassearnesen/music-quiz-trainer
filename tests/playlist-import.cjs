@@ -6,7 +6,7 @@ const { test } = require('node:test');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const source = html.match(/<script>\s*(\(function\(\)\{[\s\S]*?)<\/script>/)[1]
-  .replace(/\}\)\(\);\s*$/, 'globalThis.importTest={createCuratedPlaylist,resolveCurated,api};})();');
+  .replace(/\}\)\(\);\s*$/, 'globalThis.importTest={createCuratedPlaylist,resolveCurated,api,copyImportDiagnostics};})();');
 
 function track(n) {
   return {
@@ -41,10 +41,11 @@ function setup(count, options = {}) {
   let writing = false;
   const context = {
     console, URL, URLSearchParams, AbortController,
+    navigator: {},
     document: {
       readyState: 'loading', addEventListener() {},
       getElementById(id) {
-        return els[id] ||= { textContent: '', disabled: false, style: {}, value: 'all' };
+        return els[id] ||= { textContent: '', disabled: false, style: {}, value: 'all', focus() {}, select() {}, classList: { add() {}, remove() {} } };
       }
     },
     localStorage: {
@@ -142,7 +143,7 @@ test('a long cooldown at song 29 stops promptly with the exact error, preserving
   await h.build();
   assert.equal(h.searchCount(), 29);
   assert.equal(h.playlist.length, 20);
-  assert.match(h.els.curatedStatus.textContent, /API 429.*3600 second cooldown/);
+  assert.match(h.els.curatedStatus.textContent, /API 429.*Retry-After: 3600s/);
   assert.equal(h.els.curatedBuildBtn.disabled, false);
   assert.ok(h.waits.every(ms => ms <= 30000), 'must not sleep for an hour');
   assert.equal(JSON.parse(h.data.get('mqt_curated')).hasOwnProperty('artist 27|song 27'), true);
@@ -211,4 +212,37 @@ test('a short search cooldown retries the same song without losing progress', as
   assert.equal(h.playlist.length, 12);
   assert.ok(h.waits.includes(2000));
   assert.match(h.els.curatedStatus.textContent, /12 added this run/);
+});
+
+test('diagnostics include comparison, request, retry and failure details without credentials', async () => {
+  const h = setup(12, { searchFailure: 1 });
+  h.data.set('mqt_access', 'SECRET-ACCESS-TOKEN');
+  h.data.set('mqt_refresh', 'SECRET-REFRESH-TOKEN');
+  await h.build();
+  await h.context.importTest.copyImportDiagnostics();
+  const text=h.els.curatedDiagnostics.value;
+  const report=JSON.parse(text);
+  assert.equal(report.version,'24');
+  assert.equal(report.outcome,'stopped');
+  assert.equal(report.progress.checked,0);
+  assert.equal(report.events.find(e=>e.event==='comparison').missing,12);
+  const limited=report.events.find(e=>e.event==='response'&&e.status===429);
+  assert.equal(limited.retryAfter,'3600');
+  assert.ok(report.events.some(e=>e.event==='request'&&e.query.q==='Song 0 Artist 0'));
+  assert.ok(!text.includes('SECRET-'));
+  assert.ok(!text.includes('Bearer'));
+  assert.ok(!text.includes('/playlists/saved'));
+});
+
+test('persistent one-second 429s report retries and accumulated wait accurately', async () => {
+  const h=setup(2);
+  const fetch=h.context.fetch;
+  h.context.fetch=async(url,opts)=>url.includes('/search')
+    ?response({error:{message:'Still limited'}},429,'1'):fetch(url,opts);
+  await h.build();
+  assert.match(h.els.curatedStatus.textContent,/6 seconds of waiting and 3 retries.*Retry-After: 1s/);
+  await h.context.importTest.copyImportDiagnostics();
+  const report=JSON.parse(h.els.curatedDiagnostics.value);
+  assert.equal(report.events.filter(e=>e.event==='response'&&e.status===429).length,4);
+  assert.equal(report.events.filter(e=>e.event==='cooldown').length,3);
 });

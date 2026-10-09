@@ -198,6 +198,8 @@
         <button id="curatedBuildBtn" class="btn secondary block" type="button">Create / update a Spotify playlist from this list</button>
         <p id="curatedStatus" class="muted" style="margin:8px 0 0;font-size:13px"></p>
         <a id="curatedLink" class="ai-link" target="_blank" rel="noopener" style="display:none"></a>
+        <button id="curatedDiagnosticsBtn" class="btn secondary block" type="button" style="margin-top:10px">Copy import diagnostics (no credentials)</button>
+        <textarea id="curatedDiagnostics" readonly aria-label="Import diagnostics to copy" style="display:none;width:100%;min-height:180px;margin-top:8px"></textarea>
       </div>
       <div id="src-myplaylist" class="src-group" style="display:none">
         <label for="myPlaylistSel">Your playlists</label>
@@ -430,29 +432,61 @@
   }
 
   // ---------- API wrapper ----------
+  var importDiagnostics=null;
+  function logImport(event,details){
+    if(!importDiagnostics)return;
+    importDiagnostics.events.push(Object.assign({at:new Date().toISOString(),event:event},details));
+    if(importDiagnostics.events.length>200)importDiagnostics.events.shift();
+  }
+  function diagnosticRequest(path,method){
+    var u=new URL(path.indexOf('http')===0?path:API+path);
+    var query={};
+    ['q','type','limit','offset'].forEach(function(k){if(u.searchParams.has(k))query[k]=u.searchParams.get(k);});
+    return {endpoint:u.pathname.replace(/^\/v1/,'').replace(/\/playlists\/[^/]+/,'/playlists/{saved-playlist}'),method:method||'GET',query:query};
+  }
+  function copyImportDiagnostics(){
+    var text=JSON.stringify(importDiagnostics||{version:'24',message:'Start an import first to collect diagnostics.'},null,2);
+    var area=$('curatedDiagnostics');
+    area.value=text;area.style.display='';
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(text).then(function(){toast('Import diagnostics copied. Safe to paste into this chat.');},function(){area.focus();area.select();toast('Select and copy the diagnostics below.');});
+    }
+    area.focus();area.select();toast('Select and copy the diagnostics below.');
+    return Promise.resolve();
+  }
   function api(path,opts,retry,onWait,attempt){
     opts=opts||{};if(retry===undefined)retry=true;
     attempt=attempt||{rateRetries:0,waited:0};
     return getToken().then(function(token){
       var url=path.indexOf('http')===0?path:API+path;
       var headers=Object.assign({'Authorization':'Bearer '+token},opts.headers||{});
-      return spotifyFetch(url,Object.assign({},opts,{headers:headers}),path.split('?')[0]).then(function(res){
+      var request=diagnosticRequest(path,opts.method);var started=Date.now();
+      logImport('request',Object.assign({},request,{retry:attempt.rateRetries}));
+      return spotifyFetch(url,Object.assign({},opts,{headers:headers}),path.split('?')[0]).catch(function(e){
+        logImport('network-error',Object.assign({},request,{durationMs:Date.now()-started,message:e.message}));
+        throw e;
+      }).then(function(res){
+        logImport('response',Object.assign({},request,{status:res.status,durationMs:Date.now()-started,retryAfter:res.headers.get('Retry-After')}));
         if(res.status===401&&retry){localStorage.setItem(LS.exp,'0');return api(path,opts,false,onWait,attempt);}
         if(res.status===429){
           var ra=Number(res.headers.get('Retry-After')||'1');
           if(!Number.isFinite(ra)||ra<0)ra=1;
           var sec=ra+1;
           if(++attempt.rateRetries>3||attempt.waited+sec>60){
-            var limited=new Error('API 429 '+path.split('?')[0]+': Spotify requested a '+Math.ceil(ra)+' second cooldown. Import paused; retry later to resume.');
+            var limited=new Error('API 429 '+path.split('?')[0]+': rate limit persisted after '+attempt.waited+' seconds of waiting and '+(attempt.rateRetries-1)+' retries (latest Retry-After: '+Math.ceil(ra)+'s). Import paused; retry later to resume.');
             limited.status=429;throw limited;
           }
           attempt.waited+=sec;
+          logImport('cooldown',{seconds:sec,totalWaitSeconds:attempt.waited,retry:attempt.rateRetries});
           if(onWait)onWait(sec);
           return sleep(sec*1000).then(function(){return api(path,opts,retry,onWait,attempt);});
         }
         if(res.status===204)return null;
         if(!res.ok){return res.json().catch(function(){return{};}).then(function(j){var ep=String(path).replace(API,'').split('?')[0];var reason=(j.error&&(j.error.message||j.error.reason))||res.statusText||'';var error=new Error('API '+res.status+' '+ep+(reason?(': '+reason):''));error.status=res.status;throw error;});}
-        return res.json();
+        return res.json().then(function(d){
+          if(d.tracks&&d.tracks.items)logImport('search-results',{count:d.tracks.items.length});
+          return d;
+        });
       });
     });
   }
@@ -644,6 +678,8 @@
     var list=curatedSongs(decadeKey);
     if(!list.length)return;
     var st=$('curatedStatus'),lk=$('curatedLink'),btn=$('curatedBuildBtn');
+    importDiagnostics={version:'24',startedAt:new Date().toISOString(),decade:decadeKey,curatedEntries:list.length,events:[]};
+    $('curatedDiagnostics').style.display='none';
     lk.style.display='none';btn.disabled=true;
     var name='Music Quiz \u2014 Well-Known Hits'+(decadeKey==='all'?' (80s\u2013now)':' ('+decadeKey+')');
     st.textContent='Creating the playlist in Spotify\u2026';
@@ -651,6 +687,8 @@
     var lastRl=null;var building=true;var have=0;var remaining=0;var checked=0;var stage='Comparing playlist';
     var waitUntil=0;var started=Date.now();
     function showProgress(){
+      importDiagnostics.progress={stage:stage,alreadySaved:have,added:added,checked:checked,remaining:remaining,
+        unmatched:lastRl&&lastRl.failed||0,currentSong:lastRl&&lastRl.current||'',elapsedSeconds:Math.floor((Date.now()-started)/1000)};
       var until=Math.max(waitUntil,lastRl&&lastRl.until||0);
       var wait=until>Date.now()?(' | Spotify cooldown: '+Math.ceil((until-Date.now())/1000)+'s remaining'):'';
       st.textContent=stage+' | '+have+' already saved | '+added+' added this run | '+checked+'/'+remaining+' checked'+
@@ -690,16 +728,21 @@
         return !(curatedMatch(cache[key],s)&&seen[cache[key].uri]);
       });
       remaining=missing.length;stage='Finding missing songs';showProgress();
+      logImport('comparison',{playlistTracks:have,uniqueCuratedEntries:Object.keys(unique).length,missing:remaining,cachedLookups:Object.keys(cache).length});
       return resolveCurated(missing,function(done,total,rl){
         lastRl=rl;checked=done;showProgress();
       },true,function(uri){if(uri&&!seen[uri]){seen[uri]=1;buffer.push(uri);return flush(false);}}).then(function(){return flush(true);});
     }).then(function(){
       stopTicker();btn.disabled=false;
       var pending=(lastRl&&lastRl.failed)||0;
+      importDiagnostics.finishedAt=new Date().toISOString();importDiagnostics.outcome='finished';showProgress();
+      logImport('finished',{added:added,unmatched:pending});
       st.textContent='Finished: '+added+' added this run; '+have+' already saved.'+
         (pending?' '+pending+' songs had no matching artist/title on Spotify; they remain pending.':' All compared songs are saved.');
     }).catch(function(e){
       stopTicker();btn.disabled=false;flagReconnect(e);
+      importDiagnostics.finishedAt=new Date().toISOString();importDiagnostics.outcome='stopped';showProgress();
+      logImport('stopped',{message:e.message,status:e.status||null});
       st.textContent='Import stopped after '+checked+' checks and '+added+' saved this run: '+e.message+
         (e.status===403?' Log out and reconnect to check playlist permissions.':'')+
         ' Your playlist and successful lookups are retained. Click Create / update later to compare and resume.';
@@ -1207,6 +1250,7 @@
     $('sourceMode').onchange=updateSourceUI;
     $('clearMissesBtn').onclick=function(){setMisses([]);updateSourceUI();toast('Misses cleared.');};
     $('curatedBuildBtn').onclick=function(){createCuratedPlaylist($('curatedDecade').value);};
+    $('curatedDiagnosticsBtn').onclick=copyImportDiagnostics;
     $('curatedDecade').onchange=showSavedCuratedPlaylist;
     $('playBtn').onclick=togglePlay;
     $('replayBtn').onclick=replay;
